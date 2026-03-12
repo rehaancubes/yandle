@@ -1,0 +1,23 @@
+{
+  "name": "voxa-backend-cdk",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "synth": "cdk synth",
+    "build:layer": "cd lambda-layer/nodejs && npm install --production",
+    "deploy": "npm run build:layer && cdk deploy --require-approval never"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.167.1",
+    "@types/node": "^22.8.6",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.167.1",
+    "constructs": "^10.4.2",
+    "aws-sdk": "^2.1692.0"
+  }
+}

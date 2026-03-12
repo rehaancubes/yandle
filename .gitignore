@@ -1,0 +1,15 @@
+# Node
+node_modules/
+.npm/
+
+# Build
+**/dist/
+**/.next/
+**/cdk.out/
+
+# Env
+.env
+.env.local
+
+# macOS
+.DS_Store
