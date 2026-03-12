@@ -110,9 +110,12 @@ class NovaVoiceClient extends ChangeNotifier {
             'voiceId': 'tiffany',
             'outputSampleRate': 24000,
           });
+          final now = DateTime.now();
+          final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
           final systemPrompt = [
             'Always respond in English.',
             'You are a real-time Nova Sonic voice assistant for this Voxa business handle: $handle.',
+            'Today\'s date is $todayStr. Always use the current year (${now.year}) for all bookings.',
             'Be concise, friendly, and helpful. You can answer questions about services, timings, pricing, and availability.',
             'If the caller wants to book, collect their name and phone number and confirm back clearly.',
           ].join('\n');

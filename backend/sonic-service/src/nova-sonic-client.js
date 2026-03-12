@@ -48,7 +48,7 @@ const CREATE_BOOKING_SCHEMA = {
     startTime: {
       type: "string",
       description:
-        "Start time in ISO 8601 format, in Indian Standard Time IST (e.g. 2025-03-10T19:00:00+05:30 for 7pm IST). Convert caller phrases like 'today at 7pm' or 'tomorrow at 9am' to IST.",
+        "Start time in ISO 8601 format, in Indian Standard Time IST. IMPORTANT: Always use the CURRENT year. Convert caller phrases like 'today at 7pm' or 'tomorrow at 9am' to IST with the correct current year.",
     },
     durationMinutes: {
       type: "integer",
@@ -126,7 +126,7 @@ const GET_BOOKINGS_FOR_TIME_RANGE_SCHEMA = {
     fromTime: {
       type: "string",
       description:
-        "Start of the time window (inclusive) in ISO 8601 format, in IST (e.g. 2025-03-10T00:00:00+05:30).",
+        "Start of the time window (inclusive) in ISO 8601 format, in IST. Always use the current year.",
     },
     toTime: {
       type: "string",

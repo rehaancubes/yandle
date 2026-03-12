@@ -398,6 +398,8 @@ const ShareableLink = () => {
 
     const profileForVoice = freshProfile ?? profile;
     const systemPromptParts: string[] = [];
+    const todayStr = new Date().toISOString().slice(0, 10);
+    systemPromptParts.push(`Today's date is ${todayStr}. Always use the current year (${new Date().getFullYear()}) for all bookings.`);
     const useCaseId = profileForVoice?.useCaseId;
     const captureEmail = profileForVoice?.captureEmail !== false;
     const capturePhone = profile?.capturePhone !== false;

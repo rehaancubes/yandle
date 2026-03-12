@@ -2,7 +2,7 @@ const AWS = require("aws-sdk");
 const ddb = new AWS.DynamoDB.DocumentClient();
 
 // Super-admin emails allowed to access BMS
-const SUPER_ADMINS = ["rehaanr4@gmail.com"];
+const SUPER_ADMINS = ["rehaanr4@gmail.com", "rehaan@mobil80.com"];
 
 function isSuperAdmin(event) {
   const claims = event.requestContext?.authorizer?.jwt?.claims || {};

@@ -57,7 +57,7 @@ const BOOKING_TOOL = {
         properties: {
           customerName: { type: "string", description: "Full name of the customer / patient" },
           phone: { type: "string", description: "Customer phone number" },
-          startTime: { type: "string", description: "ISO 8601 datetime string for the booking start (e.g. 2025-07-15T14:00:00)" },
+          startTime: { type: "string", description: "ISO 8601 datetime string for the booking start. IMPORTANT: Always use the CURRENT year from today's date provided in the system prompt." },
           durationMinutes: { type: "number", description: "Duration of the booking in minutes (default 60 if not applicable)" },
           notes: { type: "string", description: "Any additional details: service type, machine type, reason for visit, items, etc." },
           serviceId: { type: "string", description: "Service ID from knowledge base (optional)" },
