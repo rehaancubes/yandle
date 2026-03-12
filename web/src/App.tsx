@@ -12,6 +12,7 @@ import Embed from "./pages/Embed";
 import NotFound from "./pages/NotFound";
 import Auth from "./pages/Auth";
 import AuthCallback from "./pages/AuthCallback";
+import BMS from "./pages/BMS";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 
 const queryClient = new QueryClient();
@@ -28,6 +29,7 @@ const App = () => (
           <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="/onboarding" element={<ProtectedRoute><Onboarding /></ProtectedRoute>} />
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          <Route path="/bms" element={<ProtectedRoute><BMS /></ProtectedRoute>} />
           <Route path="/embed/:handle" element={<Embed />} />
           <Route path="/shareable/:handle" element={<ShareableLink />} />
           <Route path="/:handle" element={<BusinessWebsite />} />

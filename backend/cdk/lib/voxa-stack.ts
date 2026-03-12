@@ -201,6 +201,18 @@ export class VoxaStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY
     });
 
+    // Payments table — stores simulated payment records
+    const paymentsTable = new ddb.Table(this, "PaymentsTable", {
+      partitionKey: { name: "paymentId", type: ddb.AttributeType.STRING },
+      billingMode: ddb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY
+    });
+    paymentsTable.addGlobalSecondaryIndex({
+      indexName: "HandleIndex",
+      partitionKey: { name: "handle", type: ddb.AttributeType.STRING },
+      sortKey: { name: "createdAt", type: ddb.AttributeType.STRING }
+    });
+
     // Website config table — stores website customization per business
     const websiteConfigTable = new ddb.Table(this, "WebsiteConfigTable", {
       partitionKey: { name: "handle", type: ddb.AttributeType.STRING },
@@ -429,6 +441,8 @@ export class VoxaStack extends cdk.Stack {
       CATALOG_TABLE: catalogTable.tableName,
       TOKENS_TABLE: tokensTable.tableName,
       CREDITS_TABLE: creditsTable.tableName,
+      PAYMENTS_TABLE: paymentsTable.tableName,
+      PAYMENTS_HANDLE_INDEX: "HandleIndex",
       WEBSITE_CONFIG_TABLE: websiteConfigTable.tableName,
       WEBSITE_ASSETS_BUCKET: websiteAssetsBucket.bucketName,
       RECORDINGS_BUCKET: recordingsBucket.bucketName,
@@ -838,6 +852,20 @@ export class VoxaStack extends cdk.Stack {
     phoneNumbersTable.grantReadWriteData(phoneNumbersManageFn);
     creditsTable.grantReadWriteData(phoneNumbersManageFn);
     handlesTable.grantReadWriteData(phoneNumbersManageFn);
+    paymentsTable.grantReadWriteData(phoneNumbersManageFn);
+
+    // BMS (Business Management System) Lambda — super-admin only
+    const bmsFn = new lambda.Function(this, "BmsFunction", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: "lambda/bms.handler",
+      code: lambdaCode,
+      environment: commonEnv,
+      layers: layer
+    });
+    phoneNumbersTable.grantReadData(bmsFn);
+    paymentsTable.grantReadData(bmsFn);
+    handlesTable.grantReadData(bmsFn);
+    creditsTable.grantReadData(bmsFn);
 
     // Website Config Lambda
     const websiteConfigFn = new lambda.Function(this, "WebsiteConfigFunction", {
@@ -1245,6 +1273,26 @@ export class VoxaStack extends cdk.Stack {
       path: "/phone-numbers/release",
       methods: [apigwv2.HttpMethod.POST],
       integration: new integrations.HttpLambdaIntegration("PhoneReleaseIntegration", phoneNumbersManageFn),
+      authorizer: jwtAuthorizer
+    });
+
+    // BMS (super-admin) endpoints
+    httpApi.addRoutes({
+      path: "/bms/summary",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration("BmsSummaryIntegration", bmsFn),
+      authorizer: jwtAuthorizer
+    });
+    httpApi.addRoutes({
+      path: "/bms/numbers",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration("BmsNumbersIntegration", bmsFn),
+      authorizer: jwtAuthorizer
+    });
+    httpApi.addRoutes({
+      path: "/bms/payments",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration("BmsPaymentsIntegration", bmsFn),
       authorizer: jwtAuthorizer
     });
 

@@ -130,6 +130,25 @@ exports.handler = async (event) => {
         }
       }
 
+      // Record simulated payment
+      const PAYMENTS_TABLE = process.env.PAYMENTS_TABLE;
+      if (PAYMENTS_TABLE) {
+        const crypto = require("crypto");
+        await ddb.put({
+          TableName: PAYMENTS_TABLE,
+          Item: {
+            paymentId: crypto.randomUUID(),
+            handle,
+            amount: 500,
+            currency: "INR",
+            type: "phone_purchase",
+            phoneNumber,
+            status: "completed",
+            createdAt: now
+          }
+        }).promise();
+      }
+
       return { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ ok: true, phoneNumber, credits: 1000 }) };
     }
 

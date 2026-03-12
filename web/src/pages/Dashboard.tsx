@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Link as LinkIcon, Mic, MessageSquare, Settings,
   Share2, Copy, Check, ExternalLink, ChevronLeft, ChevronRight,
   TrendingUp, User, Building2, Calendar, Users, BookOpen, Plus, Trash2, Loader2,
-  UserPlus, Play, ChevronDown, ChevronUp, X, PhoneCall, XCircle, Globe2, Upload, Image,
+  UserPlus, Play, ChevronDown, ChevronUp, X, PhoneCall, XCircle, Globe2, Upload, Image, Coins,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -44,6 +44,8 @@ const allNavItems = [
   { id: "embed", label: "Embed", icon: LinkIcon, ownerOnly: false },
   { id: "website", label: "Website", icon: Globe2, ownerOnly: false },
   { id: "members", label: "Members", icon: UserPlus, ownerOnly: true },
+  { id: "phone", label: "Phone Number", icon: PhoneCall, ownerOnly: false },
+  { id: "credits", label: "Credits", icon: Coins, ownerOnly: false },
   { id: "settings", label: "Settings", icon: Settings, ownerOnly: false },
 ];
 
@@ -250,6 +252,12 @@ const Dashboard = () => {
   // Credits
   const [creditsBalance, setCreditsBalance] = useState<number | null>(null);
   const [creditsTotalUsed, setCreditsTotalUsed] = useState<number | null>(null);
+
+  // Phone Number tab
+  const [availableNumbers, setAvailableNumbers] = useState<any[]>([]);
+  const [phoneLoading, setPhoneLoading] = useState(false);
+  const [assigningPhone, setAssigningPhone] = useState<string | null>(null);
+  const [releasingPhone, setReleasingPhone] = useState(false);
 
   // Conversations: expanded row & full session objects
   const [expandedConvId, setExpandedConvId] = useState<string | null>(null);
@@ -604,6 +612,72 @@ const Dashboard = () => {
       .catch(() => {});
   }, [apiBase, voxaHandle, activeNav]);
 
+  // Load credits on credits tab
+  useEffect(() => {
+    if (!apiBase || !voxaHandle || activeNav !== "credits") return;
+    const token = localStorage.getItem("voxa_id_token") || "";
+    fetch(`${apiBase}/credits?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => { if (data) { setCreditsBalance(data.credits ?? null); setCreditsTotalUsed(data.totalCreditsUsed ?? null); setFormData((p: any) => ({ ...p, planType: data.planType || "none" })); } })
+      .catch(() => {});
+  }, [apiBase, voxaHandle, activeNav]);
+
+  // Load available phone numbers on phone tab
+  useEffect(() => {
+    if (!apiBase || !voxaHandle || activeNav !== "phone") return;
+    if (handlePhoneNumber) return; // already has a number
+    setPhoneLoading(true);
+    const token = localStorage.getItem("voxa_id_token") || "";
+    fetch(`${apiBase}/phone-numbers/available`, { headers: { authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : { numbers: [] }))
+      .then((data) => setAvailableNumbers(data.numbers || []))
+      .catch(() => {})
+      .finally(() => setPhoneLoading(false));
+  }, [apiBase, voxaHandle, activeNav, handlePhoneNumber]);
+
+  const handleAssignPhone = async (phoneNumber: string) => {
+    setAssigningPhone(phoneNumber);
+    try {
+      const token = localStorage.getItem("voxa_id_token") || "";
+      const res = await fetch(`${apiBase}/phone-numbers/assign`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ handle: voxaHandle, phoneNumber })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setHandlePhoneNumber(phoneNumber);
+        setCreditsBalance(data.credits ?? creditsBalance);
+        setAvailableNumbers([]);
+        toast({ title: "Phone number assigned!", description: `${phoneNumber} is now active with 1000 free credits.` });
+      } else {
+        toast({ title: "Error", description: data.error || "Could not assign number", variant: "destructive" });
+      }
+    } catch { toast({ title: "Error", description: "Network error", variant: "destructive" }); }
+    setAssigningPhone(null);
+  };
+
+  const handleReleasePhone = async () => {
+    if (!handlePhoneNumber) return;
+    setReleasingPhone(true);
+    try {
+      const token = localStorage.getItem("voxa_id_token") || "";
+      const res = await fetch(`${apiBase}/phone-numbers/release`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ handle: voxaHandle, phoneNumber: handlePhoneNumber })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setHandlePhoneNumber("");
+        toast({ title: "Phone number released", description: "The number has been released and is available for others." });
+      } else {
+        toast({ title: "Error", description: data.error || "Could not release number", variant: "destructive" });
+      }
+    } catch { toast({ title: "Error", description: "Network error", variant: "destructive" }); }
+    setReleasingPhone(false);
+  };
+
   /** Switch the active handle — updates state, clears stale data, and persists to localStorage. */
   const switchHandle = (handle: any) => {
     if (!handle?.handle || handle.handle === voxaHandle) return;
@@ -652,6 +726,9 @@ const Dashboard = () => {
     setWebsiteSocialLinks({});
     setWebsiteConfigLoaded(false);
     setExpandedConvId(null);
+    setAvailableNumbers([]);
+    setAssigningPhone(null);
+    setReleasingPhone(false);
 
     // Persist the selected handle to localStorage
     const stored = {
@@ -716,7 +793,6 @@ const Dashboard = () => {
             captureEmail: formData.captureEmail !== false,
             capturePhone: formData.capturePhone !== false,
             useCaseId: useCase?.id,
-            knowledgeBaseId: typeof formData.knowledgeBaseId === "string" ? formData.knowledgeBaseId.trim() : "",
           }),
         });
         if (!response.ok) {
@@ -3311,6 +3387,127 @@ const Dashboard = () => {
             </motion.div>
           )}
 
+          {activeNav === "phone" && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+              {handlePhoneNumber ? (
+                <>
+                  <Card className="bg-card/50 border-border">
+                    <CardHeader>
+                      <CardTitle className="text-lg">Your Phone Number</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex items-center gap-4">
+                        <div className="h-14 w-14 rounded-xl bg-primary/15 flex items-center justify-center">
+                          <PhoneCall className="h-7 w-7 text-primary" />
+                        </div>
+                        <div>
+                          <p className="text-2xl font-bold text-white tracking-wide">{handlePhoneNumber}</p>
+                          <p className="text-sm text-muted-foreground">Active · ₹500/month</p>
+                        </div>
+                      </div>
+                      <div className="pt-2 border-t border-border">
+                        <p className="text-sm text-muted-foreground mb-3">
+                          This number is connected to your AI voice agent. Callers to this number will be handled by your AI assistant.
+                        </p>
+                        <Button variant="destructive" size="sm" disabled={releasingPhone} onClick={handleReleasePhone}>
+                          {releasingPhone ? "Releasing..." : "Cancel & Release Number"}
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </>
+              ) : (
+                <>
+                  <div className="mb-2">
+                    <h3 className="text-lg font-semibold text-white">Get a Phone Number</h3>
+                    <p className="text-sm text-muted-foreground">Purchase a dedicated phone number for your AI voice agent. Includes 1000 free credits.</p>
+                  </div>
+                  {phoneLoading ? (
+                    <div className="flex justify-center py-12">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+                    </div>
+                  ) : availableNumbers.length === 0 ? (
+                    <Card className="bg-card/50 border-border">
+                      <CardContent className="pt-6 text-center">
+                        <p className="text-muted-foreground">No phone numbers available at the moment. Please check back later.</p>
+                      </CardContent>
+                    </Card>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {availableNumbers.map((n: any) => (
+                        <Card key={n.phoneNumber} className="bg-card/50 border-border hover:border-primary/40 transition-colors">
+                          <CardContent className="pt-5 flex items-center justify-between">
+                            <div>
+                              <p className="text-lg font-mono font-semibold text-white">{n.phoneNumber}</p>
+                              <p className="text-xs text-muted-foreground">₹{n.monthlyPrice || 500}/month</p>
+                            </div>
+                            <Button size="sm" disabled={assigningPhone !== null} onClick={() => handleAssignPhone(n.phoneNumber)}>
+                              {assigningPhone === n.phoneNumber ? "Assigning..." : "Purchase"}
+                            </Button>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </motion.div>
+          )}
+
+          {activeNav === "credits" && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+              {/* Large balance card */}
+              <div className="bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/20 rounded-2xl p-8">
+                <div className="flex items-center gap-3 mb-2">
+                  <Coins className="h-6 w-6 text-primary" />
+                  <span className="text-sm text-muted-foreground">Available Credits</span>
+                </div>
+                <div className="text-5xl font-bold text-white mb-1">{(creditsBalance ?? 0).toLocaleString()}</div>
+                <p className="text-sm text-muted-foreground">credits remaining</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Card className="bg-card/50 border-border">
+                  <CardContent className="pt-6">
+                    <p className="text-xs text-muted-foreground mb-1">Total Used</p>
+                    <p className="text-2xl font-bold text-white">{(creditsTotalUsed ?? 0).toLocaleString()}</p>
+                  </CardContent>
+                </Card>
+                <Card className="bg-card/50 border-border">
+                  <CardContent className="pt-6">
+                    <p className="text-xs text-muted-foreground mb-1">Plan</p>
+                    <p className="text-2xl font-bold text-white capitalize">{(formData.planType as string) || "None"}</p>
+                  </CardContent>
+                </Card>
+                <Card className="bg-card/50 border-border">
+                  <CardContent className="pt-6">
+                    <p className="text-xs text-muted-foreground mb-1">Usage</p>
+                    <div className="flex items-end gap-2">
+                      <p className="text-2xl font-bold text-white">
+                        {creditsBalance != null && creditsTotalUsed != null
+                          ? Math.round((creditsTotalUsed / Math.max(1, creditsBalance + creditsTotalUsed)) * 100)
+                          : 0}%
+                      </p>
+                    </div>
+                    <div className="mt-2 h-2 bg-muted rounded-full overflow-hidden">
+                      <div className="h-full bg-primary rounded-full transition-all" style={{
+                        width: `${creditsBalance != null && creditsTotalUsed != null ? Math.round((creditsTotalUsed / Math.max(1, creditsBalance + creditsTotalUsed)) * 100) : 0}%`
+                      }} />
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <Card className="bg-card/50 border-border">
+                <CardContent className="pt-6">
+                  <p className="text-sm text-muted-foreground">
+                    Credits are consumed per AI voice call and chat message. Each voice call costs approximately 5-10 credits depending on duration. Chat messages cost 1 credit each.
+                  </p>
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
+
           {activeNav === "settings" && (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
@@ -3399,23 +3596,6 @@ const Dashboard = () => {
                         />
                       </div>
                     </div>
-                  </div>
-
-                  {/* Bedrock Knowledge Base (auto-sync + optional override) */}
-                  <div className="space-y-4 pt-2 border-t border-border">
-                    <Label className="text-base">Knowledge Base</Label>
-                    <p className="text-xs text-muted-foreground">
-                      When the stack is configured with a Knowledge Base, your business data (locations, branches, services, pricing, doctors, slot config, and the summary below) is auto-synced whenever you save. The voice agent uses it to answer caller questions. Leave blank to use the default; or paste a different Knowledge base ID to use your own KB for this handle.
-                    </p>
-                    <Input
-                      placeholder="Default (auto-synced) or paste your KB ID"
-                      value={(formData.knowledgeBaseId as string) ?? ""}
-                      onChange={(e) => setFormData((p) => ({ ...p, knowledgeBaseId: e.target.value }))}
-                      className="bg-card/50 font-mono text-sm"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      One-time setup: see <code className="rounded bg-muted px-1">docs/KNOWLEDGE_BASE.md</code> to create the KB and set stack parameters.
-                    </p>
                   </div>
 
                   {/* Salon: branches & services */}

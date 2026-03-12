@@ -129,7 +129,7 @@ class _BookingsPageState extends State<BookingsPage> {
 
   bool _isUpcoming(String startTime) {
     try {
-      return DateTime.parse(startTime).isAfter(DateTime.now());
+      return DateTime.parse(startTime).toLocal().isAfter(DateTime.now());
     } catch (_) {
       return false;
     }
