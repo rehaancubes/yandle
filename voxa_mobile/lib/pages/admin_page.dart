@@ -10,12 +10,14 @@ class AdminPage extends StatefulWidget {
   final String handle;
   final String? displayName;
   final String? useCase;
+  final Color themeColor;
 
   const AdminPage({
     super.key,
     required this.handle,
     this.displayName,
     this.useCase,
+    this.themeColor = const Color(0xFF4F46E5),
   });
 
   @override
@@ -50,6 +52,8 @@ class _AdminPageState extends State<AdminPage>
   bool _tokensLoading = true;
   String? _tokensError;
   final Set<String> _updatingToken = {};
+
+  Color get _themeColor => widget.themeColor;
 
   @override
   void initState() {
@@ -201,7 +205,7 @@ class _AdminPageState extends State<AdminPage>
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Booking cancelled.'),
-              backgroundColor: Color(0xFF4F46E5),
+              backgroundColor: _themeColor,
             ),
           );
         }
@@ -276,7 +280,7 @@ class _AdminPageState extends State<AdminPage>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(msg),
-        backgroundColor: isError ? Colors.redAccent : const Color(0xFF4F46E5),
+        backgroundColor: isError ? Colors.redAccent : _themeColor,
       ),
     );
   }
@@ -321,8 +325,8 @@ class _AdminPageState extends State<AdminPage>
         bottom: _isClinic
             ? TabBar(
                 controller: _tabs,
-                indicatorColor: const Color(0xFF4F46E5),
-                labelColor: const Color(0xFF4F46E5),
+                indicatorColor: _themeColor,
+                labelColor: _themeColor,
                 unselectedLabelColor: Colors.white54,
                 tabs: const [
                   Tab(text: "Today's Bookings"),
@@ -345,7 +349,7 @@ class _AdminPageState extends State<AdminPage>
   Widget _buildBookings(ThemeData theme) {
     if (_bookingsLoading || _resourcesLoading) {
       return const Center(
-          child: CircularProgressIndicator(color: Color(0xFF4F46E5)));
+          child: CircularProgressIndicator(color: _themeColor));
     }
     if (_bookingsError != null) {
       return Center(
@@ -393,7 +397,7 @@ class _AdminPageState extends State<AdminPage>
   Widget _buildFlatBookingsList(ThemeData theme) {
     return RefreshIndicator(
       onRefresh: _loadBookings,
-      color: const Color(0xFF4F46E5),
+      color: _themeColor,
       child: ListView.separated(
         padding: const EdgeInsets.all(16),
         itemCount: _bookings.length,
@@ -402,6 +406,7 @@ class _AdminPageState extends State<AdminPage>
           b: _bookings[i],
           cancelling: _cancelling.contains(_bookings[i].startTime),
           formatTime: _formatTime,
+          themeColor: _themeColor,
           onCancel: () async {
             final ok = await _confirmCancel(_bookings[i]);
             if (ok == true) _cancelBooking(_bookings[i]);
@@ -418,7 +423,7 @@ class _AdminPageState extends State<AdminPage>
       onRefresh: () async {
         await Future.wait([_loadBookings(), _loadResources()]);
       },
-      color: const Color(0xFF4F46E5),
+      color: _themeColor,
       child: ListView.separated(
         padding: const EdgeInsets.all(16),
         itemCount: _resources.length,
@@ -442,7 +447,7 @@ class _AdminPageState extends State<AdminPage>
             icon: Icons.sports_esports_outlined,
             title: center.name,
             subtitle: '${machineTypes.length} machine type${machineTypes.length == 1 ? '' : 's'}',
-            accentColor: const Color(0xFF4F46E5),
+            accentColor: _themeColor,
             child: Column(
               children: [
                 for (int j = 0; j < machineTypes.length; j++) ...[
@@ -490,13 +495,13 @@ class _AdminPageState extends State<AdminPage>
               padding:
                   const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: const Color(0xFF4F46E5).withValues(alpha: 0.12),
+                color: _themeColor.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
                 '${bookings.length} booked${totalCapacity != null ? ' / $totalCapacity' : ''}',
                 style: const TextStyle(
-                  color: Color(0xFF4F46E5),
+                  color: _themeColor,
                   fontSize: 11,
                   fontWeight: FontWeight.w500,
                 ),
@@ -513,7 +518,7 @@ class _AdminPageState extends State<AdminPage>
               return _BookingChip(
                 label:
                     '${b.customerName ?? b.customerEmail ?? 'Guest'} ${_formatTime(b.startTime)}',
-                color: const Color(0xFF4F46E5),
+                color: _themeColor,
               );
             }).toList(),
           ),
@@ -529,7 +534,7 @@ class _AdminPageState extends State<AdminPage>
       onRefresh: () async {
         await Future.wait([_loadBookings(), _loadResources()]);
       },
-      color: const Color(0xFF4F46E5),
+      color: _themeColor,
       child: ListView.separated(
         padding: const EdgeInsets.all(16),
         itemCount: _resources.length,
@@ -550,7 +555,7 @@ class _AdminPageState extends State<AdminPage>
             subtitle: capacity > 0
                 ? '$bookedCount / $capacity slots filled'
                 : '$bookedCount booked',
-            accentColor: const Color(0xFF4F46E5),
+            accentColor: _themeColor,
             trailing: capacity > 0
                 ? Container(
                     padding: const EdgeInsets.symmetric(
@@ -577,7 +582,7 @@ class _AdminPageState extends State<AdminPage>
                       return _BookingChip(
                         label:
                             '${b.customerName ?? b.customerEmail ?? 'Guest'} ${_formatTime(b.startTime)}',
-                        color: const Color(0xFF4F46E5),
+                        color: _themeColor,
                       );
                     }).toList(),
                   )
@@ -604,7 +609,7 @@ class _AdminPageState extends State<AdminPage>
       onRefresh: () async {
         await Future.wait([_loadBookings(), _loadResources()]);
       },
-      color: const Color(0xFF4F46E5),
+      color: _themeColor,
       child: ListView.separated(
         padding: const EdgeInsets.all(16),
         itemCount: _resources.length,
@@ -619,7 +624,7 @@ class _AdminPageState extends State<AdminPage>
             icon: Icons.medical_services_outlined,
             title: doctor.name,
             subtitle: '${doctorBookings.length} appointment${doctorBookings.length == 1 ? '' : 's'} today',
-            accentColor: const Color(0xFF4F46E5),
+            accentColor: _themeColor,
             child: doctorBookings.isNotEmpty
                 ? Wrap(
                     spacing: 6,
@@ -628,7 +633,7 @@ class _AdminPageState extends State<AdminPage>
                       return _BookingChip(
                         label:
                             '${b.customerName ?? b.customerEmail ?? 'Guest'} ${_formatTime(b.startTime)}',
-                        color: const Color(0xFF4F46E5),
+                        color: _themeColor,
                       );
                     }).toList(),
                   )
@@ -653,7 +658,7 @@ class _AdminPageState extends State<AdminPage>
   Widget _buildTokens(ThemeData theme) {
     if (_tokensLoading) {
       return const Center(
-          child: CircularProgressIndicator(color: Color(0xFF4F46E5)));
+          child: CircularProgressIndicator(color: _themeColor));
     }
     if (_tokensError != null) {
       return Center(
@@ -687,7 +692,7 @@ class _AdminPageState extends State<AdminPage>
     }
     return RefreshIndicator(
       onRefresh: _loadTokens,
-      color: const Color(0xFF4F46E5),
+      color: _themeColor,
       child: ListView.separated(
         padding: const EdgeInsets.all(16),
         itemCount: _tokens.length,
@@ -696,6 +701,7 @@ class _AdminPageState extends State<AdminPage>
           t: _tokens[i],
           updating: _updatingToken.contains(_tokens[i].tokenId),
           onUpdateStatus: (status) => _updateTokenStatus(_tokens[i], status),
+          themeColor: _themeColor,
         ),
       ),
     );
@@ -709,12 +715,14 @@ class _BookingCard extends StatelessWidget {
   final bool cancelling;
   final String Function(String) formatTime;
   final VoidCallback onCancel;
+  final Color themeColor;
 
   const _BookingCard({
     required this.b,
     required this.cancelling,
     required this.formatTime,
     required this.onCancel,
+    required this.themeColor,
   });
 
   @override
@@ -743,8 +751,8 @@ class _BookingCard extends StatelessWidget {
               ),
               Text(
                 formatTime(b.startTime),
-                style: const TextStyle(
-                  color: Color(0xFF4F46E5),
+                style: TextStyle(
+                  color: themeColor,
                   fontWeight: FontWeight.w600,
                   fontSize: 13,
                 ),
@@ -813,19 +821,21 @@ class _TokenCard extends StatelessWidget {
   final _Token t;
   final bool updating;
   final void Function(String status) onUpdateStatus;
+  final Color themeColor;
 
   const _TokenCard({
     required this.t,
     required this.updating,
     required this.onUpdateStatus,
+    required this.themeColor,
   });
 
-  static const _statusColors = {
-    'WAITING': Color(0xFFF59E0B),
-    'CALLED': Color(0xFF4F46E5),
-    'DONE': Color(0xFF22C55E),
-    'NO_SHOW': Colors.white38,
-  };
+  Map<String, Color> get _statusColors => {
+        'WAITING': const Color(0xFFF59E0B),
+        'CALLED': themeColor,
+        'DONE': const Color(0xFF22C55E),
+        'NO_SHOW': Colors.white38,
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -905,7 +915,7 @@ class _TokenCard extends StatelessWidget {
                 if (t.status == 'WAITING')
                   _ActionButton(
                     label: 'Call',
-                    color: const Color(0xFF4F46E5),
+                    color: themeColor,
                     onTap: () => onUpdateStatus('CALLED'),
                   ),
                 if (t.status == 'CALLED') ...[
@@ -924,13 +934,13 @@ class _TokenCard extends StatelessWidget {
               ],
             ),
           ] else if (updating)
-            const Padding(
-              padding: EdgeInsets.only(top: 10),
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
               child: SizedBox(
                 height: 20,
                 child: LinearProgressIndicator(
-                  color: Color(0xFF4F46E5),
-                  backgroundColor: Color(0xFF1E293B),
+                  color: themeColor,
+                  backgroundColor: const Color(0xFF1E293B),
                 ),
               ),
             ),

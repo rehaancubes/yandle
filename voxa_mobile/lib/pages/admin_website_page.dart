@@ -9,7 +9,12 @@ import '../services/auth_service.dart';
 
 class AdminWebsitePage extends StatefulWidget {
   final String handle;
-  const AdminWebsitePage({super.key, required this.handle});
+  final Color themeColor;
+  const AdminWebsitePage({
+    super.key,
+    required this.handle,
+    this.themeColor = const Color(0xFF4F46E5),
+  });
 
   @override
   State<AdminWebsitePage> createState() => _AdminWebsitePageState();
@@ -194,17 +199,17 @@ class _AdminWebsitePageState extends State<AdminWebsitePage> {
                   TextButton.icon(
                     onPressed: _saving ? null : _save,
                     icon: _saving
-                        ? const SizedBox(
+                        ? SizedBox(
                             width: 14,
                             height: 14,
                             child: CircularProgressIndicator(
                                 strokeWidth: 1.5,
-                                color: Color(0xFF4F46E5)),
+                                color: widget.themeColor),
                           )
                         : const Icon(Icons.save_rounded, size: 16),
                     label: const Text('Save'),
                     style: TextButton.styleFrom(
-                      foregroundColor: const Color(0xFF4F46E5),
+                      foregroundColor: widget.themeColor,
                     ),
                   ),
                 ],
@@ -214,7 +219,7 @@ class _AdminWebsitePageState extends State<AdminWebsitePage> {
               const Expanded(
                 child: Center(
                   child:
-                      CircularProgressIndicator(color: Color(0xFF4F46E5)),
+                      CircularProgressIndicator(color: widget.themeColor),
                 ),
               )
             else
@@ -232,14 +237,14 @@ class _AdminWebsitePageState extends State<AdminWebsitePage> {
                       ),
                       child: Row(
                         children: [
-                          const Icon(Icons.language_rounded,
-                              color: Color(0xFF4F46E5), size: 18),
+                          Icon(Icons.language_rounded,
+                              color: widget.themeColor, size: 18),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
                               'callcentral.io/${widget.handle}',
-                              style: const TextStyle(
-                                color: Color(0xFF4F46E5),
+                              style: TextStyle(
+                                color: widget.themeColor,
                                 fontSize: 13,
                                 fontWeight: FontWeight.w500,
                               ),

@@ -8,7 +8,12 @@ import '../services/auth_service.dart';
 
 class AdminCustomersPage extends StatefulWidget {
   final String handle;
-  const AdminCustomersPage({super.key, required this.handle});
+  final Color themeColor;
+  const AdminCustomersPage({
+    super.key,
+    required this.handle,
+    this.themeColor = const Color(0xFF4F46E5),
+  });
 
   @override
   State<AdminCustomersPage> createState() => _AdminCustomersPageState();
@@ -88,7 +93,7 @@ class _AdminCustomersPageState extends State<AdminCustomersPage> {
             if (_loading)
               const Expanded(
                 child: Center(
-                  child: CircularProgressIndicator(color: Color(0xFF4F46E5)),
+                  child: CircularProgressIndicator(color: widget.themeColor),
                 ),
               )
             else if (_error != null)
@@ -136,7 +141,7 @@ class _AdminCustomersPageState extends State<AdminCustomersPage> {
                               width: 40,
                               height: 40,
                               decoration: BoxDecoration(
-                                color: const Color(0xFF4F46E5)
+                                color: widget.themeColor
                                     .withValues(alpha: 0.15),
                                 borderRadius: BorderRadius.circular(10),
                               ),
@@ -145,8 +150,8 @@ class _AdminCustomersPageState extends State<AdminCustomersPage> {
                                   c.name.isNotEmpty
                                       ? c.name[0].toUpperCase()
                                       : '?',
-                                  style: const TextStyle(
-                                    color: Color(0xFF4F46E5),
+                                  style: TextStyle(
+                                    color: widget.themeColor,
                                     fontWeight: FontWeight.bold,
                                     fontSize: 16,
                                   ),

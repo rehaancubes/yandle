@@ -62,6 +62,14 @@ exports.handler = async (event) => {
       if (defaultId) profile.knowledgeBaseId = defaultId;
     }
 
+    // Attach colorTheme from website config so consumers (ShareableLink, etc.) can theme themselves
+    if (process.env.WEBSITE_CONFIG_TABLE) {
+      try {
+        const wcResult = await ddb.get({ TableName: process.env.WEBSITE_CONFIG_TABLE, Key: { handle } }).promise();
+        if (wcResult.Item?.colorTheme) profile.colorTheme = wcResult.Item.colorTheme;
+      } catch (_) {}
+    }
+
     const [doctors, locations, services, branches, centers] = await Promise.all([
       queryAll(process.env.DOCTORS_TABLE, "doctorId", handle),
       queryAll(process.env.LOCATIONS_TABLE, "locationId", handle),

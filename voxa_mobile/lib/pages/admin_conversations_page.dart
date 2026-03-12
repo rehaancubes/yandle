@@ -9,7 +9,12 @@ import '../services/auth_service.dart';
 
 class AdminConversationsPage extends StatefulWidget {
   final String handle;
-  const AdminConversationsPage({super.key, required this.handle});
+  final Color themeColor;
+  const AdminConversationsPage({
+    super.key,
+    required this.handle,
+    this.themeColor = const Color(0xFF4F46E5),
+  });
 
   @override
   State<AdminConversationsPage> createState() => _AdminConversationsPageState();
@@ -126,7 +131,7 @@ class _AdminConversationsPageState extends State<AdminConversationsPage> {
               const Expanded(
                 child: Center(
                   child:
-                      CircularProgressIndicator(color: Color(0xFF4F46E5)),
+                      CircularProgressIndicator(color: widget.themeColor),
                 ),
               )
             else if (_error != null)
@@ -172,7 +177,7 @@ class _AdminConversationsPageState extends State<AdminConversationsPage> {
                           borderRadius: BorderRadius.circular(14),
                           border: Border.all(
                             color: isExpanded
-                                ? const Color(0xFF4F46E5)
+                                ? widget.themeColor
                                     .withValues(alpha: 0.5)
                                 : const Color(0xFF1E293B),
                           ),
@@ -204,7 +209,7 @@ class _AdminConversationsPageState extends State<AdminConversationsPage> {
                                         color: c.channel == 'voice'
                                             ? const Color(0xFF22C55E)
                                                 .withValues(alpha: 0.15)
-                                            : const Color(0xFF4F46E5)
+                                            : widget.themeColor
                                                 .withValues(alpha: 0.15),
                                         borderRadius:
                                             BorderRadius.circular(8),
@@ -215,7 +220,7 @@ class _AdminConversationsPageState extends State<AdminConversationsPage> {
                                             : Icons.chat_bubble_outline_rounded,
                                         color: c.channel == 'voice'
                                             ? const Color(0xFF22C55E)
-                                            : const Color(0xFF4F46E5),
+                                            : widget.themeColor,
                                         size: 18,
                                       ),
                                     ),
@@ -279,7 +284,8 @@ class _AdminConversationsPageState extends State<AdminConversationsPage> {
                                     const SizedBox(height: 10),
                                     if (c.recordingUrl != null) ...[
                                       _AudioPlayerWidget(
-                                          url: c.recordingUrl!),
+                                          url: c.recordingUrl!,
+                                          themeColor: widget.themeColor),
                                       const SizedBox(height: 10),
                                     ],
                                     if (_loadingMessages)
@@ -288,7 +294,7 @@ class _AdminConversationsPageState extends State<AdminConversationsPage> {
                                           padding: EdgeInsets.all(16),
                                           child:
                                               CircularProgressIndicator(
-                                            color: Color(0xFF4F46E5),
+                                            color: widget.themeColor,
                                             strokeWidth: 2,
                                           ),
                                         ),
@@ -316,8 +322,7 @@ class _AdminConversationsPageState extends State<AdminConversationsPage> {
                                                   decoration: BoxDecoration(
                                                     color: m.role ==
                                                             'assistant'
-                                                        ? const Color(
-                                                                0xFF4F46E5)
+                                                        ? widget.themeColor
                                                             .withValues(
                                                                 alpha:
                                                                     0.2)
@@ -340,8 +345,7 @@ class _AdminConversationsPageState extends State<AdminConversationsPage> {
                                                     size: 14,
                                                     color: m.role ==
                                                             'assistant'
-                                                        ? const Color(
-                                                            0xFF4F46E5)
+                                                        ? widget.themeColor
                                                         : Colors
                                                             .white54,
                                                   ),
@@ -456,7 +460,11 @@ class _Message {
 
 class _AudioPlayerWidget extends StatefulWidget {
   final String url;
-  const _AudioPlayerWidget({required this.url});
+  final Color themeColor;
+  const _AudioPlayerWidget({
+    required this.url,
+    this.themeColor = const Color(0xFF4F46E5),
+  });
 
   @override
   State<_AudioPlayerWidget> createState() => _AudioPlayerWidgetState();
@@ -556,7 +564,7 @@ class _AudioPlayerWidgetState extends State<_AudioPlayerWidget> {
         color: const Color(0xFF0F172A),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: const Color(0xFF4F46E5).withValues(alpha: 0.3),
+          color: widget.themeColor.withValues(alpha: 0.3),
         ),
       ),
       child: Column(
@@ -564,8 +572,8 @@ class _AudioPlayerWidgetState extends State<_AudioPlayerWidget> {
         children: [
           Row(
             children: [
-              const Icon(Icons.graphic_eq_rounded,
-                  color: Color(0xFF4F46E5), size: 16),
+              Icon(Icons.graphic_eq_rounded,
+                  color: widget.themeColor, size: 16),
               const SizedBox(width: 6),
               const Text(
                 'Call Recording',
@@ -587,7 +595,7 @@ class _AudioPlayerWidgetState extends State<_AudioPlayerWidget> {
                       child: Padding(
                         padding: EdgeInsets.all(8),
                         child: CircularProgressIndicator(
-                          color: Color(0xFF4F46E5),
+                          color: widget.themeColor,
                           strokeWidth: 2,
                         ),
                       ),
@@ -604,7 +612,7 @@ class _AudioPlayerWidgetState extends State<_AudioPlayerWidget> {
                         width: 36,
                         height: 36,
                         decoration: BoxDecoration(
-                          color: const Color(0xFF4F46E5),
+                          color: widget.themeColor,
                           borderRadius: BorderRadius.circular(18),
                         ),
                         child: Icon(
@@ -643,8 +651,8 @@ class _AudioPlayerWidgetState extends State<_AudioPlayerWidget> {
                           backgroundColor: Colors.white
                               .withValues(alpha: 0.08),
                           valueColor:
-                              const AlwaysStoppedAnimation<Color>(
-                                  Color(0xFF4F46E5)),
+                              AlwaysStoppedAnimation<Color>(
+                                  widget.themeColor),
                           minHeight: 4,
                         ),
                       ),

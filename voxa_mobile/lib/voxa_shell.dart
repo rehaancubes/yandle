@@ -1,5 +1,10 @@
-import 'package:flutter/material.dart';
+import 'dart:convert';
 
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+
+import 'api_config.dart';
+import 'services/auth_service.dart';
 import 'pages/admin_page.dart';
 import 'pages/admin_conversations_page.dart';
 import 'pages/admin_customers_page.dart';
@@ -23,6 +28,16 @@ class _VoxaShellState extends State<VoxaShell> {
   String? _adminHandle;
   String? _adminDisplayName;
   String? _adminUseCase;
+  Color _adminThemeColor = const Color(0xFF4F46E5);
+
+  static const _themeColorMap = <String, Color>{
+    'indigo': Color(0xFF6366F1),
+    'emerald': Color(0xFF10B981),
+    'rose': Color(0xFFF43F5E),
+    'amber': Color(0xFFF59E0B),
+    'cyan': Color(0xFF06B6D4),
+    'violet': Color(0xFF8B5CF6),
+  };
 
   void _toggleAdminMode({
     required bool enable,
@@ -35,8 +50,30 @@ class _VoxaShellState extends State<VoxaShell> {
       _adminHandle = handle;
       _adminDisplayName = displayName;
       _adminUseCase = useCase;
+      _adminThemeColor = const Color(0xFF4F46E5);
       _index = 0;
     });
+    if (enable && handle != null) _loadAdminThemeColor(handle);
+  }
+
+  Future<void> _loadAdminThemeColor(String handle) async {
+    try {
+      final token = await AuthService.getIdToken();
+      final resp = await http.get(
+        Uri.parse(
+            '$apiBase/website/config?handle=${Uri.encodeComponent(handle)}'),
+        headers: {'authorization': 'Bearer $token'},
+      );
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final config = data['config'] as Map<String, dynamic>? ?? {};
+        final ct =
+            (config['colorTheme'] as String?)?.toLowerCase() ?? 'indigo';
+        if (_themeColorMap.containsKey(ct) && mounted) {
+          setState(() => _adminThemeColor = _themeColorMap[ct]!);
+        }
+      }
+    } catch (_) {}
   }
 
   List<Widget> get _userTabs => const [
@@ -50,15 +87,20 @@ class _VoxaShellState extends State<VoxaShell> {
           handle: _adminHandle ?? '',
           displayName: _adminDisplayName,
           useCase: _adminUseCase,
+          themeColor: _adminThemeColor,
         ),
-        AdminConversationsPage(handle: _adminHandle ?? ''),
-        AdminCustomersPage(handle: _adminHandle ?? ''),
-        AdminWebsitePage(handle: _adminHandle ?? ''),
+        AdminConversationsPage(
+            handle: _adminHandle ?? '', themeColor: _adminThemeColor),
+        AdminCustomersPage(
+            handle: _adminHandle ?? '', themeColor: _adminThemeColor),
+        AdminWebsitePage(
+            handle: _adminHandle ?? '', themeColor: _adminThemeColor),
         AdminProfilePage(
           handle: _adminHandle ?? '',
           displayName: _adminDisplayName,
           useCase: _adminUseCase,
           onToggleOff: () => _toggleAdminMode(enable: false),
+          themeColor: _adminThemeColor,
         ),
       ];
 

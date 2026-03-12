@@ -52,6 +52,8 @@ type PublicProfile = {
   branches?: Array<{ branchId: string; name?: string; location?: string; capacity?: number; address?: string }>;
   /** Bedrock Knowledge Base ID for RAG (optional). When set, voice agent can query the KB. */
   knowledgeBaseId?: string;
+  /** Color theme name or hex from website config */
+  colorTheme?: string;
 };
 
 type SonicConfig = {
@@ -97,6 +99,25 @@ const ShareableLink = () => {
   const playbackSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const themeContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // Apply business color theme to CSS custom properties
+  useEffect(() => {
+    const colorTheme = profile?.colorTheme;
+    if (!colorTheme || !themeContainerRef.current) return;
+    const hslMap: Record<string, string> = {
+      indigo: "239 84% 67%", emerald: "160 84% 39%", rose: "347 91% 60%",
+      amber: "38 92% 50%", cyan: "189 94% 43%", violet: "263 90% 66%",
+    };
+    const hsl = hslMap[colorTheme.toLowerCase()] || hslMap.indigo;
+    if (!hsl) return;
+    const el = themeContainerRef.current;
+    el.style.setProperty("--primary", hsl);
+    el.style.setProperty("--accent", hsl);
+    el.style.setProperty("--ring", hsl);
+    el.style.setProperty("--glow-primary", hsl);
+    el.style.setProperty("--sidebar-primary", hsl);
+  }, [profile?.colorTheme]);
 
   useEffect(() => {
     let cancelled = false;
@@ -684,7 +705,7 @@ const ShareableLink = () => {
 
   if (isEmbed) {
     return (
-      <div className="min-h-[540px] h-full w-full flex flex-col bg-background p-2 overflow-auto">
+      <div ref={themeContainerRef} className="min-h-[540px] h-full w-full flex flex-col bg-background p-2 overflow-auto">
         <Card className="flex-1 flex flex-col min-h-0 overflow-hidden border border-border bg-card/70 backdrop-blur-sm">
           <CardHeader className="pb-2 py-3">
             <CardTitle className="font-display text-lg">Chat & Voice</CardTitle>
@@ -735,7 +756,7 @@ const ShareableLink = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background bg-grid relative overflow-hidden">
+    <div ref={themeContainerRef} className="min-h-screen bg-background bg-grid relative overflow-hidden">
       <div className="absolute inset-0 bg-radial-glow pointer-events-none" />
 
       <div className="relative z-10 mx-auto w-full max-w-6xl px-6 py-10">

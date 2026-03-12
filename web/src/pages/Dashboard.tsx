@@ -233,6 +233,20 @@ const Dashboard = () => {
   const [websiteSaving, setWebsiteSaving] = useState(false);
   const [websiteImageUploading, setWebsiteImageUploading] = useState(false);
 
+  // Color theme → CSS overrides
+  const themeHslMap: Record<string, string> = {
+    indigo: "239 84% 67%", emerald: "160 84% 39%", rose: "347 91% 60%",
+    amber: "38 92% 50%", cyan: "189 94% 43%", violet: "263 90% 66%",
+  };
+  const dashThemeHsl = themeHslMap[websiteColorTheme] || themeHslMap.indigo;
+  const dashThemeStyle: React.CSSProperties = {
+    ["--primary" as string]: dashThemeHsl,
+    ["--accent" as string]: dashThemeHsl,
+    ["--ring" as string]: dashThemeHsl,
+    ["--glow-primary" as string]: dashThemeHsl,
+    ["--sidebar-primary" as string]: dashThemeHsl,
+  };
+
   // Credits
   const [creditsBalance, setCreditsBalance] = useState<number | null>(null);
   const [creditsTotalUsed, setCreditsTotalUsed] = useState<number | null>(null);
@@ -860,7 +874,7 @@ const Dashboard = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background flex">
+    <div className="min-h-screen bg-background flex" style={dashThemeStyle}>
       {/* Sidebar */}
       <aside
         className={`fixed top-0 left-0 h-full z-40 bg-sidebar border-r border-sidebar-border flex flex-col transition-all duration-300 ${

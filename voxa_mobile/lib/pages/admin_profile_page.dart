@@ -12,12 +12,15 @@ class AdminProfilePage extends StatefulWidget {
   final String? useCase;
   final VoidCallback onToggleOff;
 
+  final Color themeColor;
+
   const AdminProfilePage({
     super.key,
     required this.handle,
     this.displayName,
     this.useCase,
     required this.onToggleOff,
+    this.themeColor = const Color(0xFF4F46E5),
   });
 
   @override
@@ -224,13 +227,13 @@ class _AdminProfilePageState extends State<AdminProfilePage> {
                         const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
                       color:
-                          const Color(0xFF4F46E5).withValues(alpha: 0.15),
+                          widget.themeColor.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: const Text(
+                    child: Text(
                       'ADMIN',
                       style: TextStyle(
-                        color: Color(0xFF4F46E5),
+                        color: widget.themeColor,
                         fontSize: 10,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 1,
@@ -244,7 +247,7 @@ class _AdminProfilePageState extends State<AdminProfilePage> {
               const Expanded(
                 child: Center(
                   child:
-                      CircularProgressIndicator(color: Color(0xFF4F46E5)),
+                      CircularProgressIndicator(color: widget.themeColor),
                 ),
               )
             else
@@ -258,8 +261,8 @@ class _AdminProfilePageState extends State<AdminProfilePage> {
                         padding: const EdgeInsets.all(16),
                         margin: const EdgeInsets.only(bottom: 16),
                         decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF4F46E5), Color(0xFF7C3AED)],
+                          gradient: LinearGradient(
+                            colors: [widget.themeColor, widget.themeColor.withValues(alpha: 0.7)],
                           ),
                           borderRadius: BorderRadius.circular(14),
                         ),
@@ -368,7 +371,7 @@ class _AdminProfilePageState extends State<AdminProfilePage> {
                             child: ElevatedButton(
                               onPressed: _savingVoice ? null : _saveVoice,
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF4F46E5),
+                                backgroundColor: widget.themeColor,
                                 foregroundColor: Colors.white,
                               ),
                               child: _savingVoice
@@ -437,7 +440,7 @@ class _AdminProfilePageState extends State<AdminProfilePage> {
                             child: ElevatedButton(
                               onPressed: _savingPersona ? null : _savePersona,
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF4F46E5),
+                                backgroundColor: widget.themeColor,
                                 foregroundColor: Colors.white,
                               ),
                               child: _savingPersona
@@ -510,7 +513,7 @@ class _AdminProfilePageState extends State<AdminProfilePage> {
                             child: ElevatedButton(
                               onPressed: _savingKb ? null : _saveKb,
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF4F46E5),
+                                backgroundColor: widget.themeColor,
                                 foregroundColor: Colors.white,
                               ),
                               child: _savingKb
@@ -535,8 +538,8 @@ class _AdminProfilePageState extends State<AdminProfilePage> {
                       icon: const Icon(Icons.swap_horiz_rounded, size: 18),
                       label: const Text('Switch to user mode'),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF4F46E5),
-                        side: const BorderSide(color: Color(0xFF4F46E5)),
+                        foregroundColor: widget.themeColor,
+                        side: BorderSide(color: widget.themeColor),
                         minimumSize: const Size.fromHeight(44),
                       ),
                     ),
