@@ -336,6 +336,21 @@ const tcpServer = net.createServer((socket) => {
             console.log(`✅ Agent ready, ringback stopped | SESSION=${sessionIndex}`);
           },
 
+          // Interruption (barge-in): caller spoke while AI was responding.
+          // Immediately flush the output queue so stale AI audio stops playing.
+          // This mirrors exactly what ShareableLink.tsx does on the web:
+          //   playbackSourcesRef.current.forEach(s => s.stop());
+          //   playbackSourcesRef.current.clear();
+          //   playQueueRef.current.nextTime = ctx.currentTime;
+          onInterruption: () => {
+            outQueue.length = 0;
+            if (outTimer) {
+              clearInterval(outTimer);
+              outTimer = null;
+            }
+            console.log(`⚡ Output queue flushed on barge-in | SESSION=${sessionIndex}`);
+          },
+
           // AI audio: 24kHz PCM → resample to PBX rate → encode if needed → 20ms AudioSocket frames
           onAudioOutput: (() => {
             let firstChunk = true;

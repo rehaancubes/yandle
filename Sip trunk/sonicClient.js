@@ -136,7 +136,7 @@ function buildSystemPrompt(profile, callInfo = {}) {
   }
 
   parts.push(
-    "Time zone: All times are in Indian Standard Time (IST, Asia/Kolkata). When the caller says 'today at 7pm', 'tomorrow at 9am', 'next Monday at 2pm', etc., convert that to ISO 8601 in IST (e.g. 2025-03-10T19:00:00+05:30) for createBooking startTime and for getBookingsForTimeRange fromTime/toTime. Use the current date in IST as reference for 'today' and 'tomorrow'. " +
+    `Time zone: All times are in Indian Standard Time (IST, Asia/Kolkata). Today's date is ${new Date().toISOString().slice(0, 10)}. Always use the current year (${new Date().getFullYear()}). When the caller says 'today at 7pm', 'tomorrow at 9am', 'next Monday at 2pm', etc., convert that to ISO 8601 in IST for createBooking startTime and for getBookingsForTimeRange fromTime/toTime. Use the current date in IST as reference for 'today' and 'tomorrow'. ` +
     "Booking behavior (all types): " +
     "- Never ask whether the caller already has an account or is an existing customer; always handle bookings for new visitors directly. " +
     contactRules + " " +
@@ -161,7 +161,7 @@ function buildSystemPrompt(profile, callInfo = {}) {
 /**
  * @param {string} uuid - Call/session UUID
  * @param {{ did?: string, caller?: string, org?: { handle: string } }} callInfo
- * @param {{ onAudioOutput?: (buf: Buffer) => void, onSessionClosed?: () => void, onReady?: () => void }} options
+ * @param {{ onAudioOutput?: (buf: Buffer) => void, onSessionClosed?: () => void, onReady?: () => void, onInterruption?: (data: any) => void }} options
  * @returns {{ sendAudio: (buf: Buffer) => void, close: () => void }}
  */
 function startSonicStream(uuid, callInfo = {}, options = {}) {
@@ -205,6 +205,13 @@ function startSonicStream(uuid, callInfo = {}, options = {}) {
       const buf = Buffer.from(content, "base64");
       if (buf.length) onAudioOutput(buf);
     } catch (_) {}
+  });
+
+  // Interruption (barge-in): Nova Sonic detected the caller speaking while AI was responding.
+  // Same pattern as ShareableLink.tsx — immediately stop all queued AI audio.
+  socket.on("interruption", (data) => {
+    console.log(`⚡ Interruption (barge-in) | CALL=${uuid}`);
+    if (options.onInterruption) options.onInterruption(data);
   });
 
   socket.on("sessionClosed", () => {
