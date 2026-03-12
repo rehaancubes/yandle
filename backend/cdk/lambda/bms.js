@@ -22,10 +22,14 @@ exports.handler = async (event) => {
     const PAYMENTS_TABLE = process.env.PAYMENTS_TABLE;
     const HANDLES_TABLE = process.env.HANDLES_TABLE;
     const CREDITS_TABLE = process.env.CREDITS_TABLE;
+    const BOOKINGS_TABLE = process.env.BOOKINGS_TABLE;
+    const CONVERSATIONS_TABLE = process.env.CONVERSATIONS_TABLE;
+    const MEMBERS_TABLE = process.env.MEMBERS_TABLE;
+    const WEBSITE_CONFIG_TABLE = process.env.WEBSITE_CONFIG_TABLE;
 
     // GET /bms/summary
     if (path.endsWith("/summary")) {
-      const [phoneResult, paymentsResult] = await Promise.all([
+      const [phoneResult, paymentsResult, handlesCount, bookingsCount, convsCount] = await Promise.all([
         ddb.scan({
           TableName: PHONE_TABLE,
           FilterExpression: "#s = :assigned",
@@ -34,7 +38,10 @@ exports.handler = async (event) => {
         }).promise(),
         PAYMENTS_TABLE
           ? ddb.scan({ TableName: PAYMENTS_TABLE }).promise()
-          : Promise.resolve({ Items: [], Count: 0 })
+          : Promise.resolve({ Items: [], Count: 0 }),
+        ddb.scan({ TableName: HANDLES_TABLE, Select: "COUNT" }).promise(),
+        ddb.scan({ TableName: BOOKINGS_TABLE, Select: "COUNT" }).promise(),
+        ddb.scan({ TableName: CONVERSATIONS_TABLE, Select: "COUNT" }).promise()
       ]);
 
       const assignedNumbers = phoneResult.Items || [];
@@ -50,6 +57,9 @@ exports.handler = async (event) => {
           totalRevenue,
           totalPayments: payments.length,
           activeBusinesses: uniqueHandles.size,
+          totalBusinesses: handlesCount.Count || 0,
+          totalBookings: bookingsCount.Count || 0,
+          totalConversations: convsCount.Count || 0,
           currency: "INR"
         })
       };
@@ -106,6 +116,90 @@ exports.handler = async (event) => {
         .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
 
       return { statusCode: 200, headers, body: JSON.stringify({ payments }) };
+    }
+
+    // GET /bms/businesses — all businesses with enriched data
+    if (path.endsWith("/businesses")) {
+      const handlesResult = await ddb.scan({ TableName: HANDLES_TABLE }).promise();
+      const allHandles = handlesResult.Items || [];
+
+      const enriched = await Promise.all(allHandles.map(async (h) => {
+        const handle = h.handle;
+        const [creditsResult, bookingsCount, convsCount, ownerResult, websiteResult] = await Promise.all([
+          ddb.get({ TableName: CREDITS_TABLE, Key: { handle } }).promise()
+            .then(r => r.Item || null).catch(() => null),
+          ddb.query({
+            TableName: BOOKINGS_TABLE,
+            KeyConditionExpression: "handle = :h",
+            ExpressionAttributeValues: { ":h": handle },
+            Select: "COUNT"
+          }).promise().then(r => r.Count || 0).catch(() => 0),
+          ddb.query({
+            TableName: CONVERSATIONS_TABLE,
+            IndexName: "HandleCreatedAtIndex",
+            KeyConditionExpression: "handle = :h",
+            ExpressionAttributeValues: { ":h": handle },
+            Select: "COUNT"
+          }).promise().then(r => r.Count || 0).catch(() => 0),
+          MEMBERS_TABLE ? ddb.query({
+            TableName: MEMBERS_TABLE,
+            KeyConditionExpression: "handle = :h",
+            ExpressionAttributeValues: { ":h": handle }
+          }).promise().then(r => {
+            const members = r.Items || [];
+            // Find owner or first member
+            const owner = members.find(m => m.role === "owner") || members[0];
+            return owner?.email || null;
+          }).catch(() => null) : Promise.resolve(null),
+          ddb.get({ TableName: WEBSITE_CONFIG_TABLE, Key: { handle } }).promise()
+            .then(r => !!r.Item).catch(() => false)
+        ]);
+
+        return {
+          handle,
+          displayName: h.displayName || handle,
+          useCaseId: h.useCaseId || "unknown",
+          phoneNumber: h.phoneNumber || null,
+          hasAiPhone: h.hasAiPhone || false,
+          knowledgeBaseId: h.knowledgeBaseId || null,
+          createdAt: h.createdAt,
+          updatedAt: h.updatedAt,
+          credits: creditsResult?.credits ?? 0,
+          totalCreditsUsed: creditsResult?.totalCreditsUsed ?? 0,
+          planType: creditsResult?.planType || "none",
+          totalBookings: bookingsCount,
+          totalConversations: convsCount,
+          ownerEmail: ownerResult,
+          hasWebsite: websiteResult,
+          lastActive: h.updatedAt || h.createdAt
+        };
+      }));
+
+      return {
+        statusCode: 200, headers,
+        body: JSON.stringify({ businesses: enriched })
+      };
+    }
+
+    // GET /bms/credits — all credit records
+    if (path.endsWith("/credits")) {
+      const creditsResult = await ddb.scan({ TableName: CREDITS_TABLE }).promise();
+      const allCredits = creditsResult.Items || [];
+
+      const enriched = await Promise.all(allCredits.map(async (c) => {
+        try {
+          const handleRes = await ddb.get({ TableName: HANDLES_TABLE, Key: { handle: c.handle } }).promise();
+          return {
+            ...c,
+            displayName: handleRes.Item?.displayName || c.handle,
+            useCaseId: handleRes.Item?.useCaseId || "unknown"
+          };
+        } catch {
+          return { ...c, displayName: c.handle, useCaseId: "unknown" };
+        }
+      }));
+
+      return { statusCode: 200, headers, body: JSON.stringify({ credits: enriched }) };
     }
 
     return { statusCode: 404, headers, body: JSON.stringify({ error: "Not found" }) };

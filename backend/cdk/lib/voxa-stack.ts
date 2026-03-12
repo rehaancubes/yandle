@@ -866,6 +866,10 @@ export class VoxaStack extends cdk.Stack {
     paymentsTable.grantReadData(bmsFn);
     handlesTable.grantReadData(bmsFn);
     creditsTable.grantReadData(bmsFn);
+    bookingsTable.grantReadData(bmsFn);
+    conversationsTable.grantReadData(bmsFn);
+    membersTable.grantReadData(bmsFn);
+    websiteConfigTable.grantReadData(bmsFn);
 
     // Website Config Lambda
     const websiteConfigFn = new lambda.Function(this, "WebsiteConfigFunction", {
@@ -1293,6 +1297,18 @@ export class VoxaStack extends cdk.Stack {
       path: "/bms/payments",
       methods: [apigwv2.HttpMethod.GET],
       integration: new integrations.HttpLambdaIntegration("BmsPaymentsIntegration", bmsFn),
+      authorizer: jwtAuthorizer
+    });
+    httpApi.addRoutes({
+      path: "/bms/businesses",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration("BmsBusinessesIntegration", bmsFn),
+      authorizer: jwtAuthorizer
+    });
+    httpApi.addRoutes({
+      path: "/bms/credits",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration("BmsCreditsIntegration", bmsFn),
       authorizer: jwtAuthorizer
     });
 
