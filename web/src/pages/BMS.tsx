@@ -340,7 +340,7 @@ export default function BMS() {
         {/* Logo + collapse toggle */}
         <div className="flex items-center justify-between px-4 h-14 border-b border-sidebar-border">
           {!collapsed && (
-            <span className="font-display text-lg font-bold text-gradient-primary">VOXA BMS</span>
+            <span className="font-display text-lg font-bold text-gradient-primary">YANDLE BMS</span>
           )}
           <button
             onClick={() => setCollapsed(!collapsed)}

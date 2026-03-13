@@ -128,7 +128,7 @@ class _AdminConversationsPageState extends State<AdminConversationsPage> {
               ),
             ),
             if (_loading)
-              const Expanded(
+              Expanded(
                 child: Center(
                   child:
                       CircularProgressIndicator(color: widget.themeColor),
@@ -152,7 +152,7 @@ class _AdminConversationsPageState extends State<AdminConversationsPage> {
                 ),
               )
             else if (_conversations.isEmpty)
-              const Expanded(
+              Expanded(
                 child: Center(
                   child: Text('No conversations yet',
                       style: TextStyle(color: Colors.white54)),
@@ -289,9 +289,9 @@ class _AdminConversationsPageState extends State<AdminConversationsPage> {
                                       const SizedBox(height: 10),
                                     ],
                                     if (_loadingMessages)
-                                      const Center(
+                                      Center(
                                         child: Padding(
-                                          padding: EdgeInsets.all(16),
+                                          padding: const EdgeInsets.all(16),
                                           child:
                                               CircularProgressIndicator(
                                             color: widget.themeColor,
@@ -589,11 +589,11 @@ class _AudioPlayerWidgetState extends State<_AudioPlayerWidget> {
           Row(
             children: [
               _loading
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 36,
                       height: 36,
                       child: Padding(
-                        padding: EdgeInsets.all(8),
+                        padding: const EdgeInsets.all(8),
                         child: CircularProgressIndicator(
                           color: widget.themeColor,
                           strokeWidth: 2,

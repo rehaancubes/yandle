@@ -17,7 +17,7 @@ const CTASection = () => {
             Make yourself <span className="text-gradient-primary">accessible</span>.
           </h2>
           <p className="text-lg text-muted-foreground mb-10 max-w-xl mx-auto leading-relaxed">
-            Stop hiding behind forms, emails, and voicemail. Create your VOXA link and let the world talk to your AI.
+            Stop hiding behind forms, emails, and voicemail. Create your Yandle link and let the world talk to your AI.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <a

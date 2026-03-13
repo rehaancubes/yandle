@@ -31,7 +31,7 @@ class VoxaApp extends StatelessWidget {
     );
 
     return MaterialApp(
-      title: 'Voxa',
+      title: 'Yandle',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: colorScheme,

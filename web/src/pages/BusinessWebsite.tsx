@@ -842,7 +842,7 @@ const GamingCafeWebsite = ({ data }: { data: WebsiteData }) => {
           <p className="text-sm" style={{ fontFamily: "'Rajdhani', sans-serif", color: "hsl(220 10% 55%)" }}>
             Powered by{" "}
             <a href="/" className="font-semibold hover:underline" style={{ color: themeHex }}>
-              VOXA
+              YANDLE
             </a>
           </p>
         </div>
@@ -1308,7 +1308,7 @@ const BusinessWebsite = () => {
             <p className="text-xs text-muted-foreground">
               Powered by{" "}
               <a href="/" className="text-gradient-primary font-semibold hover:underline">
-                CallCentral
+                Yandle
               </a>
             </p>
           </div>

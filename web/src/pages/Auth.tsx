@@ -121,7 +121,7 @@ export default function Auth() {
       // Auto sign-in after verification
       const loginResult = await signIn(email, password);
       if (loginResult.ok) {
-        toast({ title: "Email verified!", description: "Welcome to Voxa." });
+        toast({ title: "Email verified!", description: "Welcome to Yandle." });
         await handleAfterLogin();
       } else {
         toast({ title: "Verified!", description: "Please sign in." });
@@ -289,15 +289,15 @@ export default function Auth() {
         <CardHeader className="pb-2">
           <div className="flex items-center gap-2 mb-1">
             <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
-              <span className="text-primary-foreground font-bold text-sm">V</span>
+              <span className="text-primary-foreground font-bold text-sm">Y</span>
             </div>
-            <span className="font-display text-xl font-semibold">Voxa</span>
+            <span className="font-display text-xl font-semibold">Yandle</span>
           </div>
           <CardTitle className="text-2xl font-display">
             {tab === "signin" ? "Welcome back" : "Create your account"}
           </CardTitle>
           <CardDescription>
-            {tab === "signin" ? "Sign in to your business dashboard" : "Start your free Voxa business account"}
+            {tab === "signin" ? "Sign in to your business dashboard" : "Start your free Yandle business account"}
           </CardDescription>
         </CardHeader>
         <CardContent>

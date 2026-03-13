@@ -66,7 +66,7 @@ type SonicConfig = {
 const apiBase = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 
 const starterMessages: ChatMessage[] = [
-  { role: "assistant", text: "Hey, I am your VOXA assistant. Ask me anything about services, pricing, or availability.", time: "just now" },
+  { role: "assistant", text: "Hey, I am your Yandle assistant. Ask me anything about services, pricing, or availability.", time: "just now" },
 ];
 
 const ShareableLink = () => {
@@ -142,7 +142,7 @@ const ShareableLink = () => {
           const details = await profileResp.text();
           throw new Error(
             profileResp.status === 404
-              ? "This VOXA link is not configured yet."
+              ? "This Yandle link is not configured yet."
               : `Failed to load profile (${profileResp.status}). ${details}`
           );
         }
@@ -153,7 +153,7 @@ const ShareableLink = () => {
           setMessages([
             {
               role: "assistant",
-              text: `Hey, I am ${profilePayload.profile.displayName || displayName}'s VOXA assistant. How can I help today?`,
+              text: `Hey, I am ${profilePayload.profile.displayName || displayName}'s Yandle assistant. How can I help today?`,
               time: "just now",
             },
           ]);
@@ -345,10 +345,12 @@ const ShareableLink = () => {
         expiresAt?: string;
         sonicServiceUrl?: string;
       };
+      // Prefer API; fallback to wss endpoint (same as Sip trunk)
+      const WSS_SONIC_BASE = "https://sonic.yandle.io";
       sonicServiceUrl =
         sessionPayload.sonicServiceUrl ||
         (configResp.ok ? ((await configResp.json()) as SonicConfig).sonicServiceUrl : "") ||
-        "";
+        WSS_SONIC_BASE;
       if (!sonicServiceUrl) {
         throw new Error("Sonic service URL not available. Is the Sonic ECS service deployed?");
       }
@@ -728,7 +730,7 @@ const ShareableLink = () => {
                 <div className="rounded-xl border border-border bg-secondary/30 p-2 flex-1 min-h-[240px] overflow-y-auto space-y-2">
                   {messages.map((message, idx) => (
                     <div key={`${message.role}-${idx}`} className={`rounded-lg px-2 py-1.5 max-w-[90%] text-sm ${message.role === "visitor" ? "ml-auto bg-primary/20 border border-primary/30" : "bg-background/70 border border-border"}`}>
-                      <p className="text-[11px] text-muted-foreground mb-0.5">{message.role === "visitor" ? "You" : `VOXA`}</p>
+                      <p className="text-[11px] text-muted-foreground mb-0.5">{message.role === "visitor" ? "You" : `Yandle`}</p>
                       <p>{message.text}</p>
                     </div>
                   ))}
@@ -771,7 +773,7 @@ const ShareableLink = () => {
           <section className="space-y-6">
             <Card className="bg-card/60 border-border overflow-hidden">
               <CardContent className="p-6 sm:p-8">
-                <p className="text-xs tracking-[0.18em] uppercase text-primary font-semibold mb-3">VOXA Link</p>
+                <p className="text-xs tracking-[0.18em] uppercase text-primary font-semibold mb-3">YANDLE Link</p>
                 <h1 className="font-display text-4xl sm:text-5xl font-bold leading-tight mb-3">
                   {profile?.businessName ? (
                     <>
@@ -796,7 +798,7 @@ const ShareableLink = () => {
                 <div className="mt-6 grid gap-3 sm:grid-cols-3">
                   {[
                     { icon: Sparkles, label: "Nova-powered", desc: "Understands intent + books for you" },
-                    { icon: Globe2, label: "Smart link", desc: `voxa.ai/${profile?.handle || safeHandle}` },
+                    { icon: Globe2, label: "Smart link", desc: `yandle.io/${profile?.handle || safeHandle}` },
                     {
                       icon: ShieldCheck,
                       label: "Availability-aware",
@@ -917,7 +919,7 @@ const ShareableLink = () => {
                           }`}
                         >
                           <p className="text-xs text-muted-foreground mb-1">
-                            {message.role === "visitor" ? "You" : `VOXA • ${displayName}`}
+                            {message.role === "visitor" ? "You" : `Yandle • ${displayName}`}
                           </p>
                           <p className="text-sm">{message.text}</p>
                         </div>

@@ -91,7 +91,7 @@ class _AdminCustomersPageState extends State<AdminCustomersPage> {
               ),
             ),
             if (_loading)
-              const Expanded(
+              Expanded(
                 child: Center(
                   child: CircularProgressIndicator(color: widget.themeColor),
                 ),
@@ -111,7 +111,7 @@ class _AdminCustomersPageState extends State<AdminCustomersPage> {
                 ),
               )
             else if (_customers.isEmpty)
-              const Expanded(
+              Expanded(
                 child: Center(
                   child: Text('No customers yet',
                       style: TextStyle(color: Colors.white54)),

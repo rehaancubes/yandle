@@ -49,7 +49,7 @@ exports.handler = async (event) => {
     const handle = String(body.handle || "").toLowerCase();
     const sessionId = crypto.randomUUID();
     const now = new Date().toISOString();
-    let persona = "VOXA assistant";
+    let persona = "Yandle assistant";
 
     // Extract consumer email from Bearer JWT so the message Lambda can tag
     // bookings with the caller's email (required for BookingsEmailIndex / my-bookings).

@@ -91,7 +91,7 @@ class _DiscoverPageState extends State<DiscoverPage> {
       });
     } catch (_) {
       setState(() {
-        _error = 'Could not reach Voxa. Check network/API base URL.';
+        _error = 'Could not reach Yandle. Check network/API base URL.';
       });
     } finally {
       if (mounted) {
@@ -159,7 +159,7 @@ class _DiscoverPageState extends State<DiscoverPage> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Type what you need and Voxa finds places that can take you now.',
+                    'Type what you need and Yandle finds places that can take you now.',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: Colors.white70,
                     ),

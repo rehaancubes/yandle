@@ -6,7 +6,7 @@ const steps = [
     icon: Link2,
     title: "Create Your Link",
     description: "Set up your AI persona, upload knowledge, and configure behavior in minutes.",
-    tag: "voxa.ai/yourname",
+    tag: "yandle.io/yourname",
   },
   {
     icon: MousePointerClick,

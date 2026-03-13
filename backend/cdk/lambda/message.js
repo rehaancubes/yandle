@@ -74,11 +74,18 @@ const BOOKING_TOOL = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+function stripThinking(text) {
+  // Remove <thinking>...</thinking> blocks (including multiline)
+  return text.replace(/<thinking>[\s\S]*?<\/thinking>\s*/gi, "").trim();
+}
+
 function extractText(response) {
   try {
     const content = response?.output?.message?.content || response?.content || [];
     for (const block of content) {
-      if (typeof block.text === "string" && block.text.trim()) return block.text.trim();
+      if (typeof block.text === "string" && block.text.trim()) {
+        return stripThinking(block.text);
+      }
     }
   } catch (_) {}
   return "";
@@ -201,8 +208,8 @@ function buildSystemPrompt(persona, handle, knowledgeSummary, displayName, useCa
     : "";
 
   return [
-    `You are the VOXA AI assistant for ${displayName || handle}.`,
-    `Persona: ${persona || "VOXA assistant"}.`,
+    `You are the Yandle AI assistant for ${displayName || handle}.`,
+    `Persona: ${persona || "Yandle assistant"}.`,
     `Today's date is ${today}.`,
     "",
     "General rules:",
@@ -255,7 +262,7 @@ exports.handler = async (event) => {
 
     const handle = sessionMetaResult.Item.handle || "";
     const consumerEmail = sessionMetaResult.Item.consumerEmail || null;
-    let persona = sessionMetaResult.Item.persona || "VOXA assistant";
+    let persona = sessionMetaResult.Item.persona || "Yandle assistant";
     let knowledgeSummary = "";
     let displayName = handle;
     let useCase = "";

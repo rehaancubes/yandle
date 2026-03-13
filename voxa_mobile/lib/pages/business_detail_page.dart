@@ -137,7 +137,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> {
           _ChatMessage(
             role: _ChatRole.assistant,
             text:
-                'Hey, I am $who\'s Voxa assistant. Ask me anything about services, pricing, or availability.',
+                'Hey, I am $who\'s Yandle assistant. Ask me anything about services, pricing, or availability.',
             time: DateTime.now(),
           ),
         );
@@ -512,7 +512,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Start a real-time Nova Sonic voice call with this business—same as the Voxa web portal.',
+                      'Start a real-time Nova Sonic voice call with this business—same as the Yandle web portal.',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: Colors.white70,
                       ),

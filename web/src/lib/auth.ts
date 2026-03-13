@@ -100,6 +100,44 @@ export function isAuthenticated(): boolean {
   return parseJwtExp(token) > Date.now();
 }
 
+/**
+ * Attempt to refresh the session using the stored refresh token.
+ * Returns true if new tokens were obtained, false otherwise.
+ */
+export async function refreshSession(): Promise<boolean> {
+  const { region, clientId } = getAuthConfig();
+  const refreshToken = localStorage.getItem("voxa_refresh_token");
+  if (!clientId || !region || !refreshToken) return false;
+  try {
+    const data = await cognitoRequest(region, "InitiateAuth", {
+      AuthFlow: "REFRESH_TOKEN_AUTH",
+      ClientId: clientId,
+      AuthParameters: {
+        REFRESH_TOKEN: refreshToken,
+      },
+    });
+    const result = data.AuthenticationResult;
+    if (!result?.IdToken) return false;
+    localStorage.setItem("voxa_id_token", result.IdToken);
+    if (result.AccessToken) localStorage.setItem("voxa_access_token", result.AccessToken);
+    // Cognito does not return a new refresh token on refresh — keep the existing one
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if authenticated, and if the ID token is expired, try refreshing silently.
+ * Use this instead of isAuthenticated() for auth gates.
+ */
+export async function ensureAuthenticated(): Promise<boolean> {
+  if (isAuthenticated()) return true;
+  // Token expired — try refreshing
+  const refreshed = await refreshSession();
+  return refreshed && isAuthenticated();
+}
+
 // ─── Custom auth (email + password) ───────────────────────────────────────────
 
 export interface AuthResult {

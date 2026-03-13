@@ -244,7 +244,7 @@ class _AdminProfilePageState extends State<AdminProfilePage> {
               ),
             ),
             if (_loading)
-              const Expanded(
+              Expanded(
                 child: Center(
                   child:
                       CircularProgressIndicator(color: widget.themeColor),

@@ -216,7 +216,7 @@ class _AdminWebsitePageState extends State<AdminWebsitePage> {
               ),
             ),
             if (_loading)
-              const Expanded(
+              Expanded(
                 child: Center(
                   child:
                       CircularProgressIndicator(color: widget.themeColor),
@@ -242,7 +242,7 @@ class _AdminWebsitePageState extends State<AdminWebsitePage> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'callcentral.io/${widget.handle}',
+                              'yandle.io/${widget.handle}',
                               style: TextStyle(
                                 color: widget.themeColor,
                                 fontSize: 13,

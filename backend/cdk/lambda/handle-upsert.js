@@ -72,7 +72,7 @@ exports.handler = async (event) => {
       voiceEnabled: body.voiceEnabled !== false,
       textEnabled: body.textEnabled !== false,
       voiceId: typeof body.voiceId === "string" && body.voiceId.trim() ? body.voiceId.trim() : (existing.Item?.voiceId || "tiffany"),
-      persona: body.persona || "VOXA assistant",
+      persona: body.persona || "Yandle assistant",
       knowledgeSummary: body.knowledgeSummary || "",
       knowledgeBaseCustomText: body.knowledgeBaseCustomText != null ? String(body.knowledgeBaseCustomText) : (existing.Item?.knowledgeBaseCustomText ?? ""),
       // Optional business metadata for discovery + smart links

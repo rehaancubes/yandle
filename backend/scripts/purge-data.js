@@ -1,11 +1,18 @@
 #!/usr/bin/env node
 /**
- * Purge all Voxa data for fresh testing: empties DynamoDB tables and S3 buckets
- * created by the VoxaStack. Requires AWS credentials and region (e.g. us-east-1).
+ * Purge all Voxa data for fresh testing: DynamoDB tables, S3 buckets, and Cognito users.
+ * Requires AWS credentials and region (e.g. us-east-1).
  *
  * Usage: from backend/cdk run: node ../scripts/purge-data.js
- * Optional env: TABLE_PREFIX, BUCKET_RECORDINGS, BUCKET_KB.
- * To also delete all Cognito users (so sign-up is required again): set COGNITO_USER_POOL_ID (e.g. us-east-1_D05ftfM4y).
+ *
+ * What gets purged:
+ *   - All DynamoDB tables with prefix VoxaStack- (bookings, handles, conversations, etc.)
+ *   - Recordings and KB content S3 buckets
+ *   - All Cognito users in COGNITO_USER_POOL_ID, except emails in COGNITO_PRESERVE_EMAIL (BMS login).
+ *
+ * Env: TABLE_PREFIX, BUCKET_RECORDINGS, BUCKET_KB.
+ *      COGNITO_USER_POOL_ID (default below) — set to "" to skip Cognito purge.
+ *      COGNITO_PRESERVE_EMAIL — comma-separated emails to keep (default: rehaan@mobil80.com).
  */
 
 const path = require("path");
@@ -15,7 +22,13 @@ const region = process.env.AWS_REGION || process.env.CDK_DEFAULT_REGION || "us-e
 const tablePrefix = process.env.TABLE_PREFIX || "VoxaStack-";
 const recordingsBucket = process.env.BUCKET_RECORDINGS || "voxastack-voxarecordingsbucketbcce1140-0nfpodn0lup5";
 const kbBucket = process.env.BUCKET_KB || "voxastack-voxakbcontentbucket4e4638e8-ajclwvedqmlq";
-const cognitoUserPoolId = process.env.COGNITO_USER_POOL_ID;
+const cognitoUserPoolId = process.env.COGNITO_USER_POOL_ID !== undefined && process.env.COGNITO_USER_POOL_ID !== ""
+  ? process.env.COGNITO_USER_POOL_ID
+  : "us-east-1_D05ftfM4y";
+const cognitoPreserveEmail = (process.env.COGNITO_PRESERVE_EMAIL || "rehaan@mobil80.com")
+  .split(",")
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
 
 const dynamo = new AWS.DynamoDB({ region });
 const s3 = new AWS.S3({ region });
@@ -91,19 +104,36 @@ async function emptyBucket(bucketName) {
   return total;
 }
 
-async function purgeCognitoUsers(userPoolId) {
+function getEmail(user) {
+  const attrs = user.Attributes || [];
+  const emailAttr = attrs.find((a) => a.Name === "email");
+  return (emailAttr && emailAttr.Value) ? emailAttr.Value.trim().toLowerCase() : "";
+}
+
+async function purgeCognitoUsers(userPoolId, preserveEmails) {
   let total = 0;
+  let skipped = 0;
   let token;
   do {
-    const out = await cognito.listUsers({ UserPoolId: userPoolId, Limit: 60, PaginationToken: token }).promise();
+    const out = await cognito.listUsers({
+      UserPoolId: userPoolId,
+      Limit: 60,
+      PaginationToken: token,
+      AttributesToGet: ["email"],
+    }).promise();
     for (const u of out.Users || []) {
-      if (u.Username) {
-        await cognito.adminDeleteUser({ UserPoolId: userPoolId, Username: u.Username }).promise();
-        total++;
+      if (!u.Username) continue;
+      const email = getEmail(u);
+      if (preserveEmails.length && email && preserveEmails.includes(email)) {
+        skipped++;
+        continue;
       }
+      await cognito.adminDeleteUser({ UserPoolId: userPoolId, Username: u.Username }).promise();
+      total++;
     }
     token = out.PaginationToken;
   } while (token);
+  if (skipped) console.log("  Cognito (preserved)", skipped, "user(s):", cognitoPreserveEmail.join(", "));
   return total;
 }
 
@@ -133,7 +163,7 @@ async function main() {
   }
   if (cognitoUserPoolId) {
     try {
-      const n = await purgeCognitoUsers(cognitoUserPoolId);
+      const n = await purgeCognitoUsers(cognitoUserPoolId, cognitoPreserveEmail);
       console.log("  Cognito User Pool", cognitoUserPoolId, "→", n, "users deleted");
     } catch (e) {
       console.error("  Cognito", cognitoUserPoolId, "error:", e.message);

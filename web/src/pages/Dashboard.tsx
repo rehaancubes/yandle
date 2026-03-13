@@ -742,7 +742,7 @@ const Dashboard = () => {
   };
 
   const widgets = useCase?.dashboardWidgets || [];
-  const voxaLink = voxaHandle ? `callcentral.io/${voxaHandle}` : "callcentral.io/yourname";
+  const voxaLink = voxaHandle ? `yandle.io/${voxaHandle}` : "yandle.io/yourname";
   const shareablePath = voxaHandle ? `/shareable/${voxaHandle}` : "/onboarding";
 
   const handleCopy = () => {
@@ -754,7 +754,7 @@ const Dashboard = () => {
   const saveSettings = async () => {
     const normalizedHandle = voxaHandle.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
     if (!normalizedHandle) {
-      toast({ title: "Handle required", description: "Your VOXA handle cannot be empty." });
+      toast({ title: "Handle required", description: "Your Yandle handle cannot be empty." });
       return;
     }
     const sub = getCurrentUserSub();
@@ -788,7 +788,7 @@ const Dashboard = () => {
             voiceId: (formData.voiceId as string) || "tiffany",
             persona: useCase
               ? `${useCase.title} assistant for lead qualification and conversation routing`
-              : "VOXA assistant",
+              : "Yandle assistant",
             knowledgeSummary: JSON.stringify(formData).slice(0, 1500),
             captureEmail: formData.captureEmail !== false,
             capturePhone: formData.capturePhone !== false,
@@ -959,7 +959,7 @@ const Dashboard = () => {
       >
         <div className="flex items-center justify-between px-4 h-14 border-b border-sidebar-border">
           {!collapsed && (
-            <span className="font-display text-lg font-bold text-gradient-primary">VOXA</span>
+            <span className="font-display text-lg font-bold text-gradient-primary">YANDLE</span>
           )}
           <button
             onClick={() => setCollapsed(!collapsed)}
@@ -1396,15 +1396,15 @@ const Dashboard = () => {
             >
               {/* Bookings header with actions */}
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
+                  <div>
                   <h2 className="text-base font-display font-semibold flex items-center gap-2">
-                    <Calendar className="h-4 w-4 text-primary" />
-                    Bookings
+                      <Calendar className="h-4 w-4 text-primary" />
+                      Bookings
                   </h2>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    All bookings for handle <strong>{voxaHandle || "—"}</strong>
-                  </p>
-                </div>
+                      All bookings for handle <strong>{voxaHandle || "—"}</strong>
+                    </p>
+                  </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Button
                     variant="default"
@@ -1637,8 +1637,8 @@ const Dashboard = () => {
                                           </span>
                                         )}
                                       </CardTitle>
-                                    </CardHeader>
-                                    <CardContent>
+                </CardHeader>
+                <CardContent>
                                       <div className="flex flex-wrap gap-1.5">
                                         {branchBookings.map((b: any, idx: number) => {
                                           const svc = servicesList.find((s: any) => s.serviceId === b.serviceId);
@@ -2151,7 +2151,7 @@ const Dashboard = () => {
               </div>
 
               {conversations.length === 0 ? (
-                <Card className="bg-card/50 border-border">
+              <Card className="bg-card/50 border-border">
                   <CardContent className="py-12 text-center">
                     <MessageSquare className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
                     <p className="text-sm text-muted-foreground">No conversations yet. Sessions from your AI voice and text will appear here.</p>
@@ -2173,7 +2173,7 @@ const Dashboard = () => {
                               conv.channel === "voice" ? "bg-primary/15 text-primary" : "bg-secondary text-muted-foreground"
                             }`}>
                               {conv.channel === "voice" ? <Mic className="h-4 w-4" /> : <MessageSquare className="h-4 w-4" />}
-                            </div>
+                      </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
                                 <p className="text-sm font-medium truncate">
@@ -2181,7 +2181,7 @@ const Dashboard = () => {
                                 </p>
                                 <span className={`text-xs px-2 py-0.5 rounded-full capitalize shrink-0 ${statusColors[conv.status] || "bg-muted text-muted-foreground"}`}>
                                   {conv.status}
-                                </span>
+                      </span>
                               </div>
                               <p className="text-xs text-muted-foreground truncate mt-0.5">
                                 {conv.channel === "voice" ? "Voice call" : "Text chat"}
@@ -2222,8 +2222,8 @@ const Dashboard = () => {
                                         {msg.role === "assistant" || msg.role === "ai" ? "AI:" : (conv.user || "Caller") + ":"}
                                       </span>
                                       {msg.content || msg.text || ""}
-                                    </div>
-                                  ))}
+                    </div>
+                  ))}
                                 </div>
                               </div>
                             ) : conv.intent ? (
@@ -2238,7 +2238,7 @@ const Dashboard = () => {
                             </div>
                           </div>
                         )}
-                      </Card>
+              </Card>
                     );
                   })}
                 </div>
@@ -2258,7 +2258,7 @@ const Dashboard = () => {
                   <div>
                     <h2 className="font-display text-2xl font-bold mb-1">Voice Experience</h2>
                     <p className="text-sm text-muted-foreground">
-                      Configure the voice, persona, and behavior callers hear on your VOXA link.
+                      Configure the voice, persona, and behavior callers hear on your Yandle link.
                     </p>
                   </div>
                   <Button
@@ -2272,50 +2272,50 @@ const Dashboard = () => {
                 </div>
               </div>
 
-              <Card className="bg-card/50 border-border">
-                <CardHeader>
-                  <CardTitle className="text-base font-display font-semibold flex items-center gap-2">
-                    <Mic className="h-4 w-4 text-primary" />
-                    Business Voice
-                  </CardTitle>
-                  <p className="text-sm text-muted-foreground font-normal">
-                    Voice callers hear on your public link (callcentral.io/shareable/{voxaHandle || "yourname"}).
-                  </p>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Select voice</Label>
-                    <Select
-                      value={(formData.voiceId as string) || "tiffany"}
-                      onValueChange={(value) => saveVoice(value)}
-                      disabled={voiceSaving}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Choose a voice" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {VOICE_OPTIONS.map((opt) => (
-                          <SelectItem key={opt.id} value={opt.id}>
-                            {opt.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                <Card className="bg-card/50 border-border">
+                  <CardHeader>
+                    <CardTitle className="text-base font-display font-semibold flex items-center gap-2">
+                      <Mic className="h-4 w-4 text-primary" />
+                      Business Voice
+                    </CardTitle>
+                    <p className="text-sm text-muted-foreground font-normal">
+                    Voice callers hear on your public link (yandle.io/shareable/{voxaHandle || "yourname"}).
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                      <Label>Select voice</Label>
+                      <Select
+                        value={(formData.voiceId as string) || "tiffany"}
+                        onValueChange={(value) => saveVoice(value)}
+                        disabled={voiceSaving}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Choose a voice" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {VOICE_OPTIONS.map((opt) => (
+                            <SelectItem key={opt.id} value={opt.id}>
+                              {opt.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     {voiceSaving && <p className="text-xs text-muted-foreground">Saving…</p>}
-                  </div>
-                </CardContent>
-              </Card>
+                    </div>
+                  </CardContent>
+                </Card>
 
-              <Card className="bg-card/50 border-border">
-                <CardHeader>
-                  <CardTitle className="text-base font-display font-semibold flex items-center gap-2">
+                <Card className="bg-card/50 border-border">
+                  <CardHeader>
+                    <CardTitle className="text-base font-display font-semibold flex items-center gap-2">
                     <MessageSquare className="h-4 w-4 text-primary" />
                     AI Persona
-                  </CardTitle>
+                    </CardTitle>
                   <p className="text-sm text-muted-foreground font-normal">
                     Instructions for how the AI should behave, what to say first, and its personality.
                   </p>
-                </CardHeader>
+                  </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label>Persona prompt</Label>
@@ -2328,13 +2328,13 @@ const Dashboard = () => {
                     <p className="text-xs text-muted-foreground">
                       This sets the AI's opening instructions. Keep it concise — focus on tone, role, and key info.
                     </p>
-                  </div>
+                        </div>
                   <Button onClick={savePersona} disabled={personaSaving}>
                     {personaSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                     Save persona
                   </Button>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
             </motion.div>
           )}
 
@@ -2424,7 +2424,7 @@ const Dashboard = () => {
                       </Button>
                     </div>
                   </div>
-                </CardHeader>
+                    </CardHeader>
                 <CardContent className="space-y-6">
 
                   {/* ── Gaming café: centers & machines ──────────────── */}
@@ -2481,7 +2481,7 @@ const Dashboard = () => {
                         }}>
                           {addingCenter ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Add center
                         </Button>
-                      </div>
+              </div>
                     </div>
                   )}
 
@@ -2791,7 +2791,7 @@ const Dashboard = () => {
                       onChange={(e) => setKnowledgeBaseCustomText(e.target.value)}
                       className="min-h-[120px] bg-card/50 font-mono text-sm"
                     />
-                  </div>
+                        </div>
 
                   {/* ── Upload image to extract text ─────────────────── */}
                   <div className="space-y-2 pt-4 border-t border-border">
@@ -2936,9 +2936,9 @@ const Dashboard = () => {
                     {!kbFilesLoading && kbFiles.length === 0 && !uploadFileLoading && (
                       <p className="text-xs text-muted-foreground italic">No files uploaded yet.</p>
                     )}
-                  </div>
-                </CardContent>
-              </Card>
+                    </div>
+                  </CardContent>
+                </Card>
             </motion.div>
           )}
 
@@ -2949,11 +2949,11 @@ const Dashboard = () => {
               transition={{ duration: 0.3 }}
               className="space-y-6 max-w-2xl"
             >
-              <Card className="bg-card/50 border-border">
-                <CardHeader>
+                <Card className="bg-card/50 border-border">
+                  <CardHeader>
                   <CardTitle className="font-display text-xl">Embed on your site</CardTitle>
                   <p className="text-sm text-muted-foreground">Add a chat & voice bubble to any website with a single script tag. Paste it before the closing &lt;/body&gt; tag.</p>
-                </CardHeader>
+                  </CardHeader>
                 <CardContent className="space-y-6">
                   {/* Theme configurator */}
                   <div className="space-y-4">
@@ -2970,7 +2970,7 @@ const Dashboard = () => {
                           />
                           <Input value={embedColor} onChange={(e) => setEmbedColor(e.target.value)} className="flex-1 font-mono text-sm" maxLength={7} />
                         </div>
-                      </div>
+                        </div>
                       <div className="space-y-1">
                         <Label className="text-sm">Background color</Label>
                         <div className="flex items-center gap-2">
@@ -2981,7 +2981,7 @@ const Dashboard = () => {
                             className="h-9 w-14 rounded border border-border cursor-pointer bg-transparent p-0.5"
                           />
                           <Input value={embedBg} onChange={(e) => setEmbedBg(e.target.value)} className="flex-1 font-mono text-sm" maxLength={7} />
-                        </div>
+                      </div>
                       </div>
                       <div className="space-y-1">
                         <Label className="text-sm">Position</Label>
@@ -3066,8 +3066,8 @@ const Dashboard = () => {
                       Test on this page
                     </Button>
                   </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
             </motion.div>
           )}
 
@@ -3086,12 +3086,12 @@ const Dashboard = () => {
                       <p className="text-sm text-muted-foreground mt-1">
                         Customize your public website at{" "}
                         <a
-                          href={`https://callcentral.io/${voxaHandle}`}
+                          href={`https://yandle.io/${voxaHandle}`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-primary hover:underline font-medium"
                         >
-                          callcentral.io/{voxaHandle}
+                          yandle.io/{voxaHandle}
                         </a>
                       </p>
                     </div>
@@ -3203,7 +3203,7 @@ const Dashboard = () => {
                             className="absolute top-1 right-1 bg-black/60 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                           >
                             <X className="h-3 w-3" />
-                          </button>
+                        </button>
                         </div>
                       ))}
                       {/* Upload button */}
@@ -3293,7 +3293,7 @@ const Dashboard = () => {
                 </CardHeader>
                 <CardContent className="space-y-6">
                   {/* Add manager */}
-                  <div className="space-y-2">
+                    <div className="space-y-2">
                     <Label>Invite manager by email</Label>
                     <div className="flex gap-2">
                       <Input
@@ -3334,7 +3334,7 @@ const Dashboard = () => {
                       </Button>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      If they already have a Voxa account they'll get instant access. Otherwise they'll need to sign up first.
+                      If they already have a Yandle account they'll get instant access. Otherwise they'll need to sign up first.
                     </p>
                   </div>
 
@@ -3381,7 +3381,7 @@ const Dashboard = () => {
                         ))}
                       </ul>
                     )}
-                  </div>
+                    </div>
                 </CardContent>
               </Card>
             </motion.div>
@@ -3518,14 +3518,14 @@ const Dashboard = () => {
               <Card className="bg-card/50 border-border">
                 <CardHeader>
                   <CardTitle className="font-display text-xl">Profile & AI setup</CardTitle>
-                  <p className="text-sm text-muted-foreground">Edit the same details you set during onboarding. Changes are saved locally and synced to your public VOXA link.</p>
+                  <p className="text-sm text-muted-foreground">Edit the same details you set during onboarding. Changes are saved locally and synced to your public Yandle link.</p>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  {/* VOXA handle */}
+                  {/* Yandle handle */}
                   <div className="space-y-2">
-                    <Label>VOXA handle</Label>
+                    <Label>Yandle handle</Label>
                     <div className="flex rounded-lg border border-border bg-card/50 overflow-hidden focus-within:ring-2 focus-within:ring-ring">
-                      <span className="px-3 text-sm text-muted-foreground bg-secondary/50 h-10 flex items-center">callcentral.io/</span>
+                      <span className="px-3 text-sm text-muted-foreground bg-secondary/50 h-10 flex items-center">yandle.io/</span>
                       <Input
                         value={voxaHandle}
                         onChange={(e) => setVoxaHandle(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}

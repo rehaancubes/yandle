@@ -1,11 +1,11 @@
 import {
-  Stethoscope, Scissors, Monitor,
+  Stethoscope, Scissors, Monitor, Building2, Headset,
   Calendar, Users,
-  MessageSquare, BarChart3,
+  MessageSquare, BarChart3, Phone, Ticket,
   type LucideIcon,
 } from "lucide-react";
 
-export type BusinessType = "gaming_cafe" | "salon" | "clinic";
+export type BusinessType = "gaming_cafe" | "salon" | "clinic" | "general" | "customer_support";
 
 export interface UseCase {
   id: string;
@@ -29,8 +29,6 @@ export interface DashboardWidget {
   title: string;
   icon: LucideIcon;
   type: "stat" | "list" | "chart";
-  mockValue?: string;
-  mockItems?: { label: string; value: string; status?: string }[];
 }
 
 export const businessCases: UseCase[] = [
@@ -43,8 +41,8 @@ export const businessCases: UseCase[] = [
       { name: "brand_name", label: "Brand / Cafe Name", type: "text", placeholder: "e.g. XP Arena" },
     ],
     dashboardWidgets: [
-      { id: "machine_bookings", title: "Machine Bookings", icon: Calendar, type: "list", mockItems: [] },
-      { id: "conversations", title: "AI Conversations", icon: MessageSquare, type: "chart", mockValue: "" },
+      { id: "machine_bookings", title: "Machine Bookings", icon: Calendar, type: "list" },
+      { id: "conversations", title: "AI Conversations", icon: MessageSquare, type: "chart" },
     ],
   },
   {
@@ -57,11 +55,8 @@ export const businessCases: UseCase[] = [
       { name: "hours", label: "Operating Hours", type: "text", placeholder: "e.g. Tue-Sat 10am-7pm" },
     ],
     dashboardWidgets: [
-      { id: "todays_bookings", title: "Today's Bookings", icon: Calendar, type: "stat", mockValue: "9" },
-      { id: "appointments", title: "Upcoming Appointments", icon: Scissors, type: "list", mockItems: [
-        { label: "Emma R. — Haircut + Color", value: "11:00 AM", status: "confirmed" },
-        { label: "Sophie L. — Blowout", value: "1:30 PM", status: "new" },
-      ]},
+      { id: "todays_bookings", title: "Today's Bookings", icon: Calendar, type: "stat" },
+      { id: "appointments", title: "Upcoming Appointments", icon: Scissors, type: "list" },
       { id: "conversations", title: "AI Conversations", icon: MessageSquare, type: "chart" },
     ],
   },
@@ -75,12 +70,40 @@ export const businessCases: UseCase[] = [
       { name: "hours", label: "Operating Hours", type: "text", placeholder: "e.g. Mon-Fri 9am-6pm" },
     ],
     dashboardWidgets: [
-      { id: "appointments_today", title: "Today's Appointments", icon: Calendar, type: "stat", mockValue: "14" },
-      { id: "patient_intake", title: "New Patient Intake", icon: Users, type: "list", mockItems: [
-        { label: "John D. — General Checkup", value: "10:30 AM", status: "confirmed" },
-        { label: "Maria S. — Dental Cleaning", value: "2:00 PM", status: "new" },
-      ]},
-      { id: "weekly_patients", title: "Weekly Patients", icon: BarChart3, type: "stat", mockValue: "67" },
+      { id: "appointments_today", title: "Today's Appointments", icon: Calendar, type: "stat" },
+      { id: "patient_intake", title: "New Patient Intake", icon: Users, type: "list" },
+      { id: "weekly_patients", title: "Weekly Patients", icon: BarChart3, type: "stat" },
+      { id: "conversations", title: "AI Conversations", icon: MessageSquare, type: "chart" },
+    ],
+  },
+  {
+    id: "general",
+    title: "General",
+    desc: "Answer questions, capture leads, and manage callback requests with AI.",
+    icon: Building2,
+    fields: [
+      { name: "business_name", label: "Business Name", type: "text", placeholder: "e.g. Acme Corp" },
+      { name: "hours", label: "Operating Hours", type: "text", placeholder: "e.g. Mon-Fri 9am-6pm" },
+      { name: "description", label: "Business Description", type: "textarea", placeholder: "Describe what your business does..." },
+    ],
+    dashboardWidgets: [
+      { id: "requests_today", title: "Today's Requests", icon: Phone, type: "stat" },
+      { id: "requests", title: "Recent Requests", icon: Phone, type: "list" },
+      { id: "conversations", title: "AI Conversations", icon: MessageSquare, type: "chart" },
+    ],
+  },
+  {
+    id: "customer_support",
+    title: "Customer Support",
+    desc: "Categorize issues, create tickets, and track resolutions with AI.",
+    icon: Headset,
+    fields: [
+      { name: "business_name", label: "Business Name", type: "text", placeholder: "e.g. Acme Support" },
+      { name: "hours", label: "Support Hours", type: "text", placeholder: "e.g. 24/7 or Mon-Fri 9am-6pm" },
+    ],
+    dashboardWidgets: [
+      { id: "open_tickets", title: "Open Tickets", icon: Ticket, type: "stat" },
+      { id: "tickets", title: "Recent Tickets", icon: Ticket, type: "list" },
       { id: "conversations", title: "AI Conversations", icon: MessageSquare, type: "chart" },
     ],
   },

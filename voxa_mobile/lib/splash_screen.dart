@@ -70,7 +70,7 @@ class _SplashScreenState extends State<SplashScreen> {
               ),
               const SizedBox(height: 18),
               Text(
-                'Voxa',
+                'Yandle',
                 style: theme.textTheme.headlineMedium?.copyWith(
                   fontWeight: FontWeight.bold,
                   color: Colors.white,

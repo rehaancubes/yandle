@@ -14,13 +14,15 @@ class _AuthPageState extends State<AuthPage>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
 
-  // 'main' | 'otp' | 'forgot' | 'forgot-otp'
-  String _screen = 'main';
+  // 'phone' | 'phone-otp' | 'email' | 'otp' | 'forgot' | 'forgot-otp'
+  String _screen = 'phone';
 
   bool _loading = false;
   bool _showPass = false;
   String _error = '';
+  String _phoneSession = ''; // session token from phone OTP start
 
+  final _phoneCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   final _confirmPassCtrl = TextEditingController();
@@ -39,6 +41,7 @@ class _AuthPageState extends State<AuthPage>
   @override
   void dispose() {
     _tabController.dispose();
+    _phoneCtrl.dispose();
     _emailCtrl.dispose();
     _passCtrl.dispose();
     _confirmPassCtrl.dispose();
@@ -67,7 +70,47 @@ class _AuthPageState extends State<AuthPage>
     );
   }
 
-  // ─── Handlers ────────────────────────────────────────────────────────────────
+  // ─── Phone auth handlers ─────────────────────────────────────────────────────
+
+  Future<void> _sendPhoneOtp() async {
+    final phone = _phoneCtrl.text.trim();
+    if (phone.isEmpty || phone.length < 8) {
+      _setError('Enter a valid phone number.');
+      return;
+    }
+    _clearError();
+    setState(() => _loading = true);
+    final res = await AuthService.sendPhoneOtp(phone);
+    if (!mounted) return;
+    setState(() => _loading = false);
+    if (res.ok && res.session != null) {
+      _phoneSession = res.session!;
+      _otpCtrl.clear();
+      setState(() => _screen = 'phone-otp');
+      _snack('OTP sent to $phone');
+    } else {
+      _setError(res.error ?? 'Could not send OTP.');
+    }
+  }
+
+  Future<void> _verifyPhoneOtp() async {
+    final otp = _otpCtrl.text.trim();
+    if (otp.length < 6) return;
+    _clearError();
+    setState(() => _loading = true);
+    final res = await AuthService.verifyPhoneOtp(
+        _phoneCtrl.text.trim(), otp, _phoneSession);
+    if (!mounted) return;
+    setState(() => _loading = false);
+    if (res.ok) {
+      _snack('Welcome to Voxa!');
+      _goToShell();
+    } else {
+      _setError(res.error ?? 'Verification failed.');
+    }
+  }
+
+  // ─── Email auth handlers ──────────────────────────────────────────────────────
 
   Future<void> _signIn() async {
     final email = _emailCtrl.text.trim();
@@ -136,7 +179,7 @@ class _AuthPageState extends State<AuthPage>
       } else {
         _snack('Verified! Please sign in.');
         setState(() {
-          _screen = 'main';
+          _screen = 'email';
           _tabController.index = 0;
         });
       }
@@ -194,7 +237,7 @@ class _AuthPageState extends State<AuthPage>
       _otpCtrl.clear();
       _newPassCtrl.clear();
       setState(() {
-        _screen = 'main';
+        _screen = 'email';
         _tabController.index = 0;
       });
     } else {
@@ -207,18 +250,147 @@ class _AuthPageState extends State<AuthPage>
   @override
   Widget build(BuildContext context) {
     final card = switch (_screen) {
+      'phone' => _phoneCard(),
+      'phone-otp' => _phoneOtpCard(),
+      'email' => _emailCard(),
       'otp' => _otpCard(),
       'forgot' => _forgotCard(),
       'forgot-otp' => _forgotOtpCard(),
-      _ => _mainCard(),
+      _ => _phoneCard(),
     };
     return _Wrapper(child: card);
   }
 
   // ─── Cards ────────────────────────────────────────────────────────────────────
 
-  Widget _mainCard() {
+  Widget _phoneCard() {
     return _Card(children: [
+      // Logo
+      Row(children: [
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: const Color(0xFF4F46E5),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Icon(
+            Icons.spatial_audio_off_rounded,
+            color: Colors.white,
+            size: 20,
+          ),
+        ),
+        const SizedBox(width: 10),
+        const Text(
+          'Voxa',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ]),
+      const SizedBox(height: 24),
+      const Text(
+        'Sign in with phone',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 22,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      const SizedBox(height: 6),
+      const Text(
+        "We'll send a verification code to your phone number",
+        style: TextStyle(color: Colors.white54, fontSize: 13),
+      ),
+      const SizedBox(height: 20),
+      _ErrorText(_error),
+      _Field(
+        ctrl: _phoneCtrl,
+        label: 'Phone number',
+        hint: '+91 98765 43210',
+        type: TextInputType.phone,
+        autofocus: true,
+        onSubmitted: _sendPhoneOtp,
+      ),
+      const SizedBox(height: 16),
+      _PrimaryButton(
+        label: 'Send OTP',
+        loading: _loading,
+        onPressed: _sendPhoneOtp,
+      ),
+      const SizedBox(height: 16),
+      Center(
+        child: TextButton(
+          onPressed: () => setState(() {
+            _screen = 'email';
+            _clearError();
+          }),
+          child: const Text(
+            'Sign in with email instead',
+            style: TextStyle(color: Colors.white54, fontSize: 13),
+          ),
+        ),
+      ),
+    ]);
+  }
+
+  Widget _phoneOtpCard() {
+    return _Card(children: [
+      _BackBtn(() {
+        setState(() {
+          _screen = 'phone';
+          _otpCtrl.clear();
+          _clearError();
+        });
+      }),
+      const SizedBox(height: 12),
+      const Text(
+        'Verify your phone',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 22,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      const SizedBox(height: 6),
+      Text(
+        'Enter the 6-digit code sent to ${_phoneCtrl.text}',
+        style: const TextStyle(color: Colors.white54, fontSize: 13),
+      ),
+      const SizedBox(height: 20),
+      _ErrorText(_error),
+      _OtpField(
+        ctrl: _otpCtrl,
+        onChanged: () => setState(() {}),
+      ),
+      const SizedBox(height: 16),
+      _PrimaryButton(
+        label: 'Verify',
+        loading: _loading,
+        onPressed: _verifyPhoneOtp,
+      ),
+      const SizedBox(height: 8),
+      TextButton(
+        onPressed: _loading ? null : _sendPhoneOtp,
+        child: const Text(
+          'Resend code',
+          style: TextStyle(color: Colors.white54, fontSize: 13),
+        ),
+      ),
+    ]);
+  }
+
+  Widget _emailCard() {
+    return _Card(children: [
+      _BackBtn(() {
+        setState(() {
+          _screen = 'phone';
+          _clearError();
+        });
+      }),
+      const SizedBox(height: 12),
       // Logo
       Row(children: [
         Container(
@@ -384,7 +556,7 @@ class _AuthPageState extends State<AuthPage>
     return _Card(children: [
       _BackBtn(() {
         setState(() {
-          _screen = 'main';
+          _screen = 'email';
           _otpCtrl.clear();
           _clearError();
         });
@@ -429,7 +601,7 @@ class _AuthPageState extends State<AuthPage>
     return _Card(children: [
       _BackBtn(() {
         setState(() {
-          _screen = 'main';
+          _screen = 'email';
           _clearError();
         });
       }),

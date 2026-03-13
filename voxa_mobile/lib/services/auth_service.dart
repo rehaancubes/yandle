@@ -258,12 +258,90 @@ class AuthService {
     }
   }
 
+  // ─── Phone+OTP auth ────────────────────────────────────────────────────────
+
+  /// Start phone OTP flow. Returns a session string needed for verification.
+  static Future<PhoneAuthResult> sendPhoneOtp(String phone) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$apiBase/auth/phone'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'phone': phone.trim(),
+          'action': 'start',
+        }),
+      );
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      if (res.statusCode != 200) {
+        return PhoneAuthResult(
+          ok: false,
+          error: data['error']?.toString() ?? 'Failed to send OTP',
+        );
+      }
+      return PhoneAuthResult(
+        ok: true,
+        session: data['session'] as String?,
+      );
+    } catch (e) {
+      return PhoneAuthResult(ok: false, error: e.toString());
+    }
+  }
+
+  /// Verify phone OTP and get tokens.
+  static Future<AuthResult> verifyPhoneOtp(
+      String phone, String otp, String session) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$apiBase/auth/phone'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'phone': phone.trim(),
+          'action': 'verify',
+          'otp': otp.trim(),
+          'session': session,
+        }),
+      );
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      if (res.statusCode != 200) {
+        return AuthResult(
+          ok: false,
+          error: data['error']?.toString() ?? 'Verification failed',
+        );
+      }
+      final idToken = data['idToken'] as String?;
+      if (idToken == null) {
+        return const AuthResult(ok: false, error: 'No token in response.');
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_idTokenKey, idToken);
+      final accessToken = data['accessToken'] as String?;
+      if (accessToken != null) {
+        await prefs.setString(_accessTokenKey, accessToken);
+      }
+      final refreshToken = data['refreshToken'] as String?;
+      if (refreshToken != null) {
+        await prefs.setString(_refreshTokenKey, refreshToken);
+      }
+      return const AuthResult(ok: true);
+    } catch (e) {
+      return AuthResult(ok: false, error: e.toString());
+    }
+  }
+
   static Future<void> signOut() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_idTokenKey);
     await prefs.remove(_accessTokenKey);
     await prefs.remove(_refreshTokenKey);
   }
+}
+
+class PhoneAuthResult {
+  final bool ok;
+  final String? error;
+  final String? session;
+
+  const PhoneAuthResult({required this.ok, this.error, this.session});
 }
 
 class _CognitoError implements Exception {

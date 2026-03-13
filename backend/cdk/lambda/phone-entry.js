@@ -92,7 +92,7 @@ exports.handler = async (event) => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           error: "Phone number not configured",
-          details: "No VOXA handle is mapped to this phone number."
+          details: "No Yandle handle is mapped to this phone number."
         })
       };
     }

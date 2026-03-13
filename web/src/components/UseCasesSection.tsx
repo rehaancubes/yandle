@@ -33,7 +33,7 @@ const UseCasesSection = () => {
             Built for everyone.
           </h2>
           <p className="text-muted-foreground text-lg max-w-xl mx-auto">
-            Whether you're a solo creator or a global brand, VOXA makes you conversationally accessible.
+            Whether you're a solo creator or a global brand, Yandle makes you conversationally accessible.
           </p>
         </motion.div>
 

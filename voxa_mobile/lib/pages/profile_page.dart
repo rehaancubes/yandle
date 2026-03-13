@@ -146,7 +146,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                 ),
                                 const SizedBox(height: 2),
                                 const Text(
-                                  'Voxa account',
+                                  'Yandle account',
                                   style: TextStyle(
                                       color: Colors.white54, fontSize: 12),
                                 ),

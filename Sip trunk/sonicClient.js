@@ -7,7 +7,8 @@ const { io } = require("socket.io-client");
 const http = require("http");
 const https = require("https");
 
-const SONIC_URL = process.env.SONIC_URL || "http://VoxaSt-Sonic-a8Cj5DESB3F1-812253045.us-east-1.elb.amazonaws.com";
+// wss via https base URL (Socket.IO uses wss when connecting to https)
+const SONIC_URL = process.env.SONIC_URL || "https://sonic.callcentral.io";
 const SONIC_REGION = process.env.SONIC_REGION || "us-east-1";
 const API_BASE = (process.env.API_BASE_URL || "https://6kbd4veax6.execute-api.us-east-1.amazonaws.com").replace(/\/$/, "");
 const DEFAULT_HANDLE = process.env.VOXA_DEFAULT_HANDLE || "m80esports";

@@ -203,7 +203,7 @@ class _AdminPageState extends State<AdminPage>
         if (mounted) {
           setState(() => _bookings.remove(b));
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
+            SnackBar(
               content: Text('Booking cancelled.'),
               backgroundColor: _themeColor,
             ),
@@ -348,7 +348,7 @@ class _AdminPageState extends State<AdminPage>
 
   Widget _buildBookings(ThemeData theme) {
     if (_bookingsLoading || _resourcesLoading) {
-      return const Center(
+      return Center(
           child: CircularProgressIndicator(color: _themeColor));
     }
     if (_bookingsError != null) {
@@ -500,7 +500,7 @@ class _AdminPageState extends State<AdminPage>
               ),
               child: Text(
                 '${bookings.length} booked${totalCapacity != null ? ' / $totalCapacity' : ''}',
-                style: const TextStyle(
+                style: TextStyle(
                   color: _themeColor,
                   fontSize: 11,
                   fontWeight: FontWeight.w500,
@@ -657,7 +657,7 @@ class _AdminPageState extends State<AdminPage>
 
   Widget _buildTokens(ThemeData theme) {
     if (_tokensLoading) {
-      return const Center(
+      return Center(
           child: CircularProgressIndicator(color: _themeColor));
     }
     if (_tokensError != null) {
