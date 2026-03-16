@@ -201,6 +201,105 @@ const RINGBACK_BUF = generateRingbackTone(PBX_RATE, PBX_CODEC);
 const app = express();
 const activeCalls = new Map();
 
+app.use(express.json());
+
+/* =====================================================
+   HTTP – OUTBOUND CALL ORIGINATE (Salesbot)
+===================================================== */
+
+const ASTERISK_ARI_URL = "http://106.51.77.143:8088";
+const ASTERISK_ARI_USER = "transcriber";
+const ASTERISK_ARI_PASS = "transcriber";
+const OUTBOUND_TRUNK = "PJSIP/mytrunk-endpoint";
+const AUDIOSOCKET_ADDR = "54.226.99.50:5000";
+const OUTBOUND_CALLER_ID = "08035229493";
+
+app.post("/call-originate", async (req, res) => {
+  const { phoneNumber, campaignId, leadId, callType, businessName, businessType, location } = req.body;
+  if (!phoneNumber) {
+    return res.status(400).json({ error: "phoneNumber is required" });
+  }
+
+  const uniqueid = generateUUID();
+  const cleanPhone = phoneNumber.replace(/[^0-9+]/g, "");
+
+  // Store in activeCalls with sales metadata BEFORE Asterisk connects
+  activeCalls.set(uniqueid, {
+    did: "outbound",
+    caller: cleanPhone,
+    direction: "outbound",
+    org: null,
+    startTime: new Date(),
+    callType: callType || "sales",
+    campaignId: campaignId || null,
+    leadId: leadId || null,
+    businessName: businessName || null,
+    businessType: businessType || null,
+    location: location || null,
+  });
+
+  console.log(`📤 ORIGINATE | UUID=${uniqueid} | Phone=${cleanPhone} | Campaign=${campaignId || "test"}`);
+
+  try {
+    // Asterisk ARI: originate call to the phone number via SIP trunk,
+    // routed back to our AudioSocket TCP server
+    const ariUrl = `${ASTERISK_ARI_URL}/ari/channels`;
+    const ariBody = JSON.stringify({
+      endpoint: `PJSIP/${cleanPhone}@mytrunk-endpoint`,
+      context: "salesbot-outbound",
+      extension: "s",
+      priority: 1,
+      callerId: OUTBOUND_CALLER_ID,
+      timeout: 30,
+      variables: { CHANNEL_UUID: uniqueid },
+    });
+
+    const ariResult = await new Promise((resolve, reject) => {
+      const parsed = new URL(ariUrl);
+      const proto = parsed.protocol === "https:" ? require("https") : require("http");
+      const authHeader = Buffer.from(`${ASTERISK_ARI_USER}:${ASTERISK_ARI_PASS}`).toString("base64");
+      const r = proto.request(
+        {
+          hostname: parsed.hostname,
+          port: parsed.port,
+          path: parsed.pathname,
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Basic ${authHeader}`,
+            "Content-Length": Buffer.byteLength(ariBody),
+          },
+        },
+        (response) => {
+          let data = "";
+          response.on("data", (chunk) => (data += chunk));
+          response.on("end", () => resolve({ status: response.statusCode, data }));
+        }
+      );
+      r.on("error", reject);
+      r.write(ariBody);
+      r.end();
+    });
+
+    console.log(`📞 ARI response | UUID=${uniqueid} | Status=${ariResult.status}`);
+    res.json({ ok: true, uniqueid, ariStatus: ariResult.status });
+  } catch (err) {
+    console.error(`❌ ARI originate failed | UUID=${uniqueid} |`, err.message);
+    // Even if ARI fails, keep the activeCalls entry for cleanup
+    activeCalls.delete(uniqueid);
+    res.status(500).json({ ok: false, error: err.message, uniqueid });
+  }
+});
+
+function generateUUID() {
+  const hex = [...Array(32)].map(() => Math.floor(Math.random() * 16).toString(16)).join("");
+  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join("-");
+}
+
+/* =====================================================
+   HTTP – CALL START (Inbound from PBX/CTI)
+===================================================== */
+
 app.get("/call-start", async (req, res) => {
   let { did, caller, uniqueid, direction } = req.query;
   did    = did?.trim();

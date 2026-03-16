@@ -160,13 +160,50 @@ function buildSystemPrompt(profile, callInfo = {}) {
 }
 
 /**
+ * Build a sales system prompt for outbound Voxa sales calls.
+ */
+function buildSalesSystemPrompt(callInfo = {}) {
+  const businessName = callInfo.businessName || "this business";
+  const businessType = callInfo.businessType || "business";
+  const location = callInfo.location || "";
+
+  return `You are a friendly sales representative calling on behalf of Voxa, an AI-powered voice agent platform for businesses.
+
+You are calling ${businessName}, a ${businessType}${location ? ` in ${location}` : ""}.
+
+## Your Goal
+1. Introduce yourself: "Hi, my name is Priya and I'm calling from Voxa."
+2. Brief pitch: "We've built an AI phone agent that can answer your business calls 24/7, book appointments for your customers, and answer FAQs — so you never miss a call again."
+3. Gauge interest: Ask if they currently struggle with missed calls, managing bookings, or answering repetitive questions.
+4. If interested: Offer to set up a free 10-minute demo. Ask for their email or a convenient time to schedule it.
+5. If they want to know more: Explain that Voxa works by giving them a shareable link and optionally a dedicated phone number. Their customers can call or visit the link, and the AI handles everything — checking availability, booking appointments, answering questions from a knowledge base.
+6. If not interested: Thank them politely, wish them a good day, and end the call gracefully.
+
+## Rules
+- Keep the call under 2 minutes. Be respectful of their time.
+- Be conversational, warm, and natural — not robotic or scripted.
+- If they say they're busy, apologize and offer to call back at a better time.
+- One soft follow-up if they seem hesitant, then respect their decision. Never be pushy.
+- Do NOT make up features. Voxa handles: voice calls, text chat, appointment booking, FAQ answering, knowledge base lookups.
+- If they ask about pricing, say "We have flexible plans starting free for small businesses, and you can try it with no commitment."
+- Always be honest. If you don't know something, say you'll have your team follow up.
+- Speak naturally with occasional filler words. Sound like a real person, not a script.
+
+## Important
+- Do NOT use any tools. This is a sales conversation only.
+- Do NOT try to book appointments or access any business systems.
+- Your only goal is to pitch Voxa and gauge interest level.`;
+}
+
+/**
  * @param {string} uuid - Call/session UUID
- * @param {{ did?: string, caller?: string, org?: { handle: string } }} callInfo
+ * @param {{ did?: string, caller?: string, org?: { handle: string }, callType?: string, campaignId?: string, leadId?: string, businessName?: string, businessType?: string, location?: string }} callInfo
  * @param {{ onAudioOutput?: (buf: Buffer) => void, onSessionClosed?: () => void, onReady?: () => void, onInterruption?: (data: any) => void }} options
  * @returns {{ sendAudio: (buf: Buffer) => void, close: () => void }}
  */
 function startSonicStream(uuid, callInfo = {}, options = {}) {
-  const handle = callInfo?.org?.handle || DEFAULT_HANDLE;
+  const isSalesCall = callInfo?.callType === "sales";
+  const handle = isSalesCall ? "voxa-salesbot" : (callInfo?.org?.handle || DEFAULT_HANDLE);
   const onAudioOutput = options.onAudioOutput;
   const onSessionClosed = options.onSessionClosed;
   const onReady = options.onReady;
@@ -224,7 +261,7 @@ function startSonicStream(uuid, callInfo = {}, options = {}) {
     console.log(`🔌 Sonic disconnected | CALL=${uuid}`);
   });
 
-  function init(knowledgeBaseId) {
+  function init(knowledgeBaseId, extraConfig = {}) {
     return new Promise((resolve, reject) => {
       if (closed) { reject(new Error("Session closed")); return; }
       socket.emit(
@@ -233,6 +270,7 @@ function startSonicStream(uuid, callInfo = {}, options = {}) {
           region: SONIC_REGION,
           handle,
           knowledgeBaseId: knowledgeBaseId || undefined,
+          ...extraConfig,
         },
         (ack) => {
           if (ack?.success) resolve();
@@ -244,20 +282,39 @@ function startSonicStream(uuid, callInfo = {}, options = {}) {
 
   async function runFlow() {
     try {
-      // Fetch the business profile dynamically (same as web ShareableLink)
-      let profile = {};
-      try {
-        profile = await fetchProfile(handle);
-        console.log(`📋 Profile loaded | CALL=${uuid} | handle=${handle} | useCase=${profile.useCaseId || "unknown"} | voice=${profile.voiceId || "default"}`);
-      } catch (err) {
-        console.log(`⚠ Profile fetch failed for ${handle}, using defaults | ${err.message}`);
+      let voiceId, systemPrompt, knowledgeBaseId;
+
+      if (isSalesCall) {
+        // Sales call — use sales system prompt, no profile fetch needed
+        console.log(`📤 Sales call setup | CALL=${uuid} | Target=${callInfo.businessName || callInfo.caller}`);
+        voiceId = "tiffany"; // Friendly female voice for sales
+        knowledgeBaseId = "";
+        systemPrompt = buildSalesSystemPrompt(callInfo);
+
+        await init(knowledgeBaseId, {
+          callType: "sales",
+          campaignId: callInfo.campaignId || null,
+          leadId: callInfo.leadId || null,
+          businessName: callInfo.businessName || null,
+          businessType: callInfo.businessType || null,
+          location: callInfo.location || null,
+        });
+      } else {
+        // Regular inbound call — fetch business profile
+        let profile = {};
+        try {
+          profile = await fetchProfile(handle);
+          console.log(`📋 Profile loaded | CALL=${uuid} | handle=${handle} | useCase=${profile.useCaseId || "unknown"} | voice=${profile.voiceId || "default"}`);
+        } catch (err) {
+          console.log(`⚠ Profile fetch failed for ${handle}, using defaults | ${err.message}`);
+        }
+
+        voiceId = profile.voiceId || callInfo?.org?.voiceId || DEFAULT_VOICE_ID;
+        knowledgeBaseId = profile.knowledgeBaseId || callInfo?.org?.knowledgeBaseId || process.env.BEDROCK_KNOWLEDGE_BASE_ID || "";
+        systemPrompt = buildSystemPrompt(profile, callInfo);
+
+        await init(knowledgeBaseId);
       }
-
-      const voiceId = profile.voiceId || callInfo?.org?.voiceId || DEFAULT_VOICE_ID;
-      const knowledgeBaseId = profile.knowledgeBaseId || callInfo?.org?.knowledgeBaseId || process.env.BEDROCK_KNOWLEDGE_BASE_ID || "";
-      const systemPrompt = buildSystemPrompt(profile, callInfo);
-
-      await init(knowledgeBaseId);
 
       socket.emit("promptStart", { voiceId, outputSampleRate: 24000 });
       socket.emit("systemPrompt", { content: systemPrompt, voiceId });
@@ -269,12 +326,13 @@ function startSonicStream(uuid, callInfo = {}, options = {}) {
         if (audioReady) resolve();
       });
 
-      // Agent speaks first: inject a synthetic prompt so the AI greets the caller
-      socket.emit("textInput", {
-        role: "user",
-        content: "[The caller has just connected to the line. Greet them warmly and ask how you can help.]"
-      });
-      console.log(`🎙 Agent-speaks-first prompt sent | CALL=${uuid}`);
+      // Agent speaks first
+      const firstPrompt = isSalesCall
+        ? "[You are making an outbound sales call. The person has just picked up. Introduce yourself warmly as Priya from Voxa and begin your pitch.]"
+        : "[The caller has just connected to the line. Greet them warmly and ask how you can help.]";
+
+      socket.emit("textInput", { role: "user", content: firstPrompt });
+      console.log(`🎙 Agent-speaks-first prompt sent | CALL=${uuid} | type=${isSalesCall ? "sales" : "inbound"}`);
     } catch (err) {
       console.log(`❌ Sonic setup error | CALL=${uuid} | ${err.message}`);
     }
