@@ -60,22 +60,23 @@ export const businessCases: UseCase[] = [
       { id: "conversations", title: "AI Conversations", icon: MessageSquare, type: "chart" },
     ],
   },
-  {
-    id: "clinic",
-    title: "Clinic",
-    desc: "AI receptionist handles appointment booking, patient tokens, and intake.",
-    icon: Stethoscope,
-    fields: [
-      { name: "clinic_name", label: "Clinic Name", type: "text", placeholder: "e.g. Sunrise Family Clinic" },
-      { name: "hours", label: "Operating Hours", type: "text", placeholder: "e.g. Mon-Fri 9am-6pm" },
-    ],
-    dashboardWidgets: [
-      { id: "appointments_today", title: "Today's Appointments", icon: Calendar, type: "stat" },
-      { id: "patient_intake", title: "New Patient Intake", icon: Users, type: "list" },
-      { id: "weekly_patients", title: "Weekly Patients", icon: BarChart3, type: "stat" },
-      { id: "conversations", title: "AI Conversations", icon: MessageSquare, type: "chart" },
-    ],
-  },
+  // Clinic use case — commented out for now, will work on later
+  // {
+  //   id: "clinic",
+  //   title: "Clinic",
+  //   desc: "AI receptionist handles appointment booking, patient tokens, and intake.",
+  //   icon: Stethoscope,
+  //   fields: [
+  //     { name: "clinic_name", label: "Clinic Name", type: "text", placeholder: "e.g. Sunrise Family Clinic" },
+  //     { name: "hours", label: "Operating Hours", type: "text", placeholder: "e.g. Mon-Fri 9am-6pm" },
+  //   ],
+  //   dashboardWidgets: [
+  //     { id: "appointments_today", title: "Today's Appointments", icon: Calendar, type: "stat" },
+  //     { id: "patient_intake", title: "New Patient Intake", icon: Users, type: "list" },
+  //     { id: "weekly_patients", title: "Weekly Patients", icon: BarChart3, type: "stat" },
+  //     { id: "conversations", title: "AI Conversations", icon: MessageSquare, type: "chart" },
+  //   ],
+  // },
   {
     id: "general",
     title: "General",

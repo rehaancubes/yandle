@@ -105,14 +105,17 @@ interface SalesLead {
   campaignId: string;
   businessName: string;
   phoneNumber: string;
-  address: string;
-  googlePlaceId: string;
-  rating: number | null;
-  website: string | null;
+  address?: string;
+  googlePlaceId?: string;
+  rating?: number | null;
+  website?: string | null;
   status: "pending" | "calling" | "completed" | "failed" | "skipped";
   classification: "hot" | "warm" | "cold" | "not_interested" | null;
   callSummary: string | null;
   callDurationSeconds: number | null;
+  transcript?: string | null;
+  callbackRequested?: boolean;
+  callbackPreferredTime?: string | null;
   createdAt: string;
 }
 
@@ -159,6 +162,7 @@ const useCaseLabels: Record<string, string> = {
 const bmsNavItems = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
   { id: "salesbot", label: "Salesbot", icon: Bot },
+  { id: "leads", label: "Leads", icon: MessageSquare },
   { id: "phone-numbers", label: "Phone Numbers", icon: Phone },
   { id: "payments", label: "Payments", icon: CreditCard },
   { id: "businesses", label: "Businesses", icon: Building2 },
@@ -242,6 +246,16 @@ export default function BMS() {
   const [testCallPollId, setTestCallPollId] = useState<string | null>(null);
   const [campaignPolling, setCampaignPolling] = useState(false);
   const [creatingCampaign, setCreatingCampaign] = useState(false);
+  const [allLeads, setAllLeads] = useState<SalesLead[]>([]);
+  const [allLeadsLoaded, setAllLeadsLoaded] = useState(false);
+  const [outboundConfig, setOutboundConfig] = useState<{ handle: string; systemPrompt: string; voiceId: string; knowledgeBaseId: string }>({
+    handle: "voxa-salesbot",
+    systemPrompt: "",
+    voiceId: "tiffany",
+    knowledgeBaseId: "",
+  });
+  const [outboundConfigLoaded, setOutboundConfigLoaded] = useState(false);
+  const [outboundSaving, setOutboundSaving] = useState(false);
 
   // Search
   const [phoneSearch, setPhoneSearch] = useState("");
@@ -315,7 +329,29 @@ export default function BMS() {
         .catch(() => {})
         .finally(() => setTabLoading(false));
     }
-  }, [activeNav, accessDenied, loading, numbersLoaded, paymentsLoaded, businessesLoaded, creditsLoaded, campaignsLoaded]);
+    if (activeNav === "leads" && !allLeadsLoaded) {
+      setTabLoading(true);
+      fetch(`${apiBase}/bms/salesbot/leads?all=1&limit=200`, { headers })
+        .then((r) => r.json())
+        .then((d) => { setAllLeads(d.leads || []); setAllLeadsLoaded(true); })
+        .catch(() => {})
+        .finally(() => setTabLoading(false));
+    }
+    if (activeNav === "salesbot" && !outboundConfigLoaded) {
+      fetch(`${apiBase}/bms/salesbot/outbound-config`, { headers })
+        .then((r) => r.json())
+        .then((d) => {
+          setOutboundConfig({
+            handle: d.handle ?? "voxa-salesbot",
+            systemPrompt: d.systemPrompt ?? "",
+            voiceId: d.voiceId ?? "tiffany",
+            knowledgeBaseId: d.knowledgeBaseId ?? "",
+          });
+          setOutboundConfigLoaded(true);
+        })
+        .catch(() => setOutboundConfigLoaded(true));
+    }
+  }, [activeNav, accessDenied, loading, numbersLoaded, paymentsLoaded, businessesLoaded, creditsLoaded, campaignsLoaded, allLeadsLoaded, outboundConfigLoaded]);
 
   // Salesbot — poll active campaign every 5s
   useEffect(() => {
@@ -862,11 +898,167 @@ export default function BMS() {
               )}
             </motion.div>
           )}
+          {/* ==================== Leads (all outbound calls) ==================== */}
+          {activeNav === "leads" && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} className="space-y-6">
+              {tabLoading && !allLeadsLoaded ? <TabLoader /> : (
+                <Card className="bg-card/50 border-border">
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle className="flex items-center gap-2 text-base">
+                          <MessageSquare className="h-4 w-4" /> All outbound calls
+                        </CardTitle>
+                        <CardDescription>Every outbound call (test and campaign). AI overview from transcript. If they requested a callback, preferred time is shown.</CardDescription>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setAllLeadsLoaded(false);
+                          setTabLoading(true);
+                          fetch(`${getApiBase()}/bms/salesbot/leads?all=1&limit=200`, { headers: getHeaders() })
+                            .then((r) => r.json())
+                            .then((d) => { setAllLeads(d.leads || []); setAllLeadsLoaded(true); })
+                            .catch(() => {})
+                            .finally(() => setTabLoading(false));
+                        }}
+                      >
+                        Refresh
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    {allLeads.length === 0 ? (
+                      <p className="text-sm text-muted-foreground py-8">No leads yet. Test calls and campaign calls will appear here.</p>
+                    ) : (
+                      <div className="space-y-4">
+                        {allLeads.map((lead) => (
+                          <div
+                            key={`${lead.campaignId}-${lead.leadId}`}
+                            className="rounded-lg border border-border bg-background/50 p-4 space-y-3"
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-medium">{lead.businessName || "—"}</span>
+                              <span className="text-muted-foreground text-sm font-mono">{lead.phoneNumber}</span>
+                              <span className="text-xs text-muted-foreground">
+                                {lead.campaignId?.startsWith("test_") ? "Test call" : lead.campaignId}
+                              </span>
+                              {classificationBadge(lead.classification)}
+                              {statusBadge(lead.status)}
+                              {lead.callDurationSeconds != null && (
+                                <span className="text-xs text-muted-foreground">{lead.callDurationSeconds}s</span>
+                              )}
+                            </div>
+                            {lead.callSummary && (
+                              <div>
+                                <p className="text-xs font-medium text-muted-foreground mb-1">AI overview</p>
+                                <p className="text-sm">{lead.callSummary}</p>
+                              </div>
+                            )}
+                            {(lead.callbackRequested || lead.callbackPreferredTime) && (
+                              <div className="flex flex-wrap items-center gap-2 rounded bg-amber-500/10 border border-amber-500/30 px-3 py-2">
+                                <CheckCircle2 className="h-4 w-4 text-amber-500" />
+                                <span className="text-sm font-medium text-amber-700 dark:text-amber-400">Callback requested</span>
+                                {lead.callbackPreferredTime && (
+                                  <span className="text-sm text-muted-foreground">· Preferred time: {lead.callbackPreferredTime}</span>
+                                )}
+                              </div>
+                            )}
+                            {lead.transcript && (
+                              <details className="group">
+                                <summary className="text-xs font-medium text-muted-foreground cursor-pointer hover:text-foreground">Transcript</summary>
+                                <pre className="mt-2 p-3 rounded bg-muted/50 text-xs whitespace-pre-wrap overflow-x-auto max-h-48 overflow-y-auto">
+                                  {lead.transcript}
+                                </pre>
+                              </details>
+                            )}
+                            <p className="text-xs text-muted-foreground">{new Date(lead.createdAt).toLocaleString()}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+            </motion.div>
+          )}
           {/* ==================== Salesbot ==================== */}
           {activeNav === "salesbot" && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} className="space-y-6">
               {tabLoading && !campaignsLoaded ? <TabLoader /> : (
                 <>
+                  {/* --- Outbound voice config (handle, system prompt, voice, KB for salesbot) --- */}
+                  <Card className="bg-card/50 border-border">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-base">Outbound voice config</CardTitle>
+                      <CardDescription>System prompt, voice, and knowledge base for the number used for outbound sales calls. Used for test calls and campaigns.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid gap-3 max-w-2xl">
+                        <div>
+                          <label className="text-xs font-medium text-muted-foreground block mb-1">Handle (yandle number)</label>
+                          <Input
+                            value={outboundConfig.handle}
+                            onChange={(e) => setOutboundConfig((c) => ({ ...c, handle: e.target.value }))}
+                            placeholder="voxa-salesbot"
+                            className="bg-background"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-muted-foreground block mb-1">System prompt</label>
+                          <textarea
+                            value={outboundConfig.systemPrompt}
+                            onChange={(e) => setOutboundConfig((c) => ({ ...c, systemPrompt: e.target.value }))}
+                            placeholder="Leave empty to use default sales pitch. Override to customize how the AI introduces and pitches."
+                            rows={6}
+                            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[120px]"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-muted-foreground block mb-1">Voice</label>
+                          <select
+                            value={outboundConfig.voiceId}
+                            onChange={(e) => setOutboundConfig((c) => ({ ...c, voiceId: e.target.value }))}
+                            className="h-9 rounded-md border border-input bg-background px-3 text-sm w-full max-w-xs"
+                          >
+                            <option value="tiffany">Tiffany (female)</option>
+                            <option value="matthew">Matthew (male)</option>
+                            <option value="joanna">Joanna (female)</option>
+                            <option value="ivy">Ivy (female)</option>
+                            <option value="joey">Joey (male)</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-muted-foreground block mb-1">Knowledge base ID (optional)</label>
+                          <Input
+                            value={outboundConfig.knowledgeBaseId}
+                            onChange={(e) => setOutboundConfig((c) => ({ ...c, knowledgeBaseId: e.target.value }))}
+                            placeholder="Leave empty for no KB"
+                            className="bg-background max-w-md"
+                          />
+                        </div>
+                        <Button
+                          onClick={async () => {
+                            setOutboundSaving(true);
+                            try {
+                              await fetch(`${getApiBase()}/bms/salesbot/outbound-config`, {
+                                method: "PATCH",
+                                headers: { ...getHeaders(), "content-type": "application/json" },
+                                body: JSON.stringify(outboundConfig),
+                              });
+                            } finally {
+                              setOutboundSaving(false);
+                            }
+                          }}
+                          disabled={outboundSaving}
+                        >
+                          {outboundSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                          Save outbound config
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
                   {/* --- Test Call Section --- */}
                   <Card className="bg-card/50 border-border">
                     <CardHeader>

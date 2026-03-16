@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:http/http.dart' as http;
+import 'package:just_audio/just_audio.dart';
 import 'package:realtime_audio/realtime_audio.dart';
 import 'package:socket_io_client_flutter/socket_io_client_flutter.dart'
     as IO;
@@ -168,12 +169,7 @@ class NovaVoiceClient extends ChangeNotifier {
       });
 
       _socket!.on('audioReady', (_) {
-        status = NovaVoiceStatus.live;
-        notifyListeners();
-        // Run on main isolate so native audio runs on main thread (avoids iOS crash)
-        SchedulerBinding.instance.addPostFrameCallback((_) {
-          _startMic();
-        });
+        _playHelloThenStartMic();
       });
 
       _socket!.on('audioOutput', (dynamic data) async {
@@ -209,6 +205,27 @@ class NovaVoiceClient extends ChangeNotifier {
       notifyListeners();
       await stop();
     }
+  }
+
+  /// Play hello.mp3 so the agent always speaks first, then set live and start mic.
+  Future<void> _playHelloThenStartMic() async {
+    try {
+      final player = AudioPlayer();
+      await player.setAsset('assets/hello.mp3');
+      await player.play().timeout(
+        const Duration(seconds: 10),
+        onTimeout: () async => await player.stop(),
+      );
+      await player.dispose();
+    } catch (_) {
+      // If hello fails (missing asset, etc.), continue to start mic
+    }
+    if (_socket?.connected != true) return;
+    status = NovaVoiceStatus.live;
+    notifyListeners();
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _startMic();
+    });
   }
 
   Future<void> _startMic() async {

@@ -29,13 +29,6 @@ type PublicProfile = {
     hasWalkInSlots?: boolean;
     supportsUrgentCases?: boolean;
   };
-  services?: Array<{
-    id?: string;
-    name?: string;
-    type?: string;
-    duration?: number;
-    basePrice?: number;
-  }>;
   voiceEnabled?: boolean;
   textEnabled?: boolean;
   voiceId?: string;
@@ -91,7 +84,7 @@ const ShareableLink = () => {
   const [voiceConnecting, setVoiceConnecting] = useState(false);
   const [voiceSessionInfo, setVoiceSessionInfo] = useState<{ token?: string; expiresAt?: string } | null>(null);
   const [voiceToolEvents, setVoiceToolEvents] = useState<
-    { id: string; ts: number; type: "use" | "result"; toolName: string; status?: "ok" | "error"; message?: string }
+    Array<{ id: string; ts: number; type: "use" | "result"; toolName: string; status?: "ok" | "error"; message?: string }>
   >([]);
   const micStreamRef = useRef<MediaStream | null>(null);
   const socketRef = useRef<Socket | null>(null);
@@ -100,25 +93,38 @@ const ShareableLink = () => {
   const playbackSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const themeContainerRef = useRef<HTMLDivElement | null>(null);
+  // Same theme map as Dashboard so shareable link matches dashboard/website
+  const themeHslMap: Record<string, string> = {
+    indigo: "239 84% 67%", emerald: "160 84% 39%", rose: "347 91% 60%",
+    amber: "38 92% 50%", cyan: "189 94% 43%", violet: "263 90% 66%",
+  };
+  const rawTheme = (profile?.colorTheme ?? "indigo").toString().trim().toLowerCase();
+  const themeHsl = themeHslMap[rawTheme] || themeHslMap.indigo;
 
-  // Apply business color theme to CSS custom properties
+  // Apply theme to document root so it overrides :root and matches dashboard (inline style on div can be ignored by some browsers)
   useEffect(() => {
-    const colorTheme = profile?.colorTheme;
-    if (!colorTheme || !themeContainerRef.current) return;
-    const hslMap: Record<string, string> = {
-      indigo: "239 84% 67%", emerald: "160 84% 39%", rose: "347 91% 60%",
-      amber: "38 92% 50%", cyan: "189 94% 43%", violet: "263 90% 66%",
+    const root = document.documentElement;
+    root.style.setProperty("--primary", themeHsl);
+    root.style.setProperty("--accent", themeHsl);
+    root.style.setProperty("--ring", themeHsl);
+    root.style.setProperty("--glow-primary", themeHsl);
+    root.style.setProperty("--sidebar-primary", themeHsl);
+    return () => {
+      root.style.removeProperty("--primary");
+      root.style.removeProperty("--accent");
+      root.style.removeProperty("--ring");
+      root.style.removeProperty("--glow-primary");
+      root.style.removeProperty("--sidebar-primary");
     };
-    const hsl = hslMap[colorTheme.toLowerCase()] || hslMap.indigo;
-    if (!hsl) return;
-    const el = themeContainerRef.current;
-    el.style.setProperty("--primary", hsl);
-    el.style.setProperty("--accent", hsl);
-    el.style.setProperty("--ring", hsl);
-    el.style.setProperty("--glow-primary", hsl);
-    el.style.setProperty("--sidebar-primary", hsl);
-  }, [profile?.colorTheme]);
+  }, [themeHsl]);
+
+  const shareableThemeStyle: React.CSSProperties = {
+    ["--primary" as string]: themeHsl,
+    ["--accent" as string]: themeHsl,
+    ["--ring" as string]: themeHsl,
+    ["--glow-primary" as string]: themeHsl,
+    ["--sidebar-primary" as string]: themeHsl,
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -604,38 +610,45 @@ const ShareableLink = () => {
     socket.emit("audioStart");
 
     socket.once("audioReady", () => {
-      // Agent speaks first: send a synthetic prompt so the AI greets the visitor
-      socket.emit("textInput", {
-        role: "user",
-        content: "[The caller has just connected. Greet them warmly and ask how you can help.]",
-      });
-      const stream = micStreamRef.current;
-      if (!stream) return;
-      const INPUT_SAMPLE_RATE = 16000;
-      const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)({
-        sampleRate: INPUT_SAMPLE_RATE,
-      });
-      audioContextRef.current = ctx;
-      if (ctx.state === "suspended") ctx.resume();
-      const source = ctx.createMediaStreamSource(stream);
-      sourceNodeRef.current = source;
-      const bufferSize = 4096;
-      const processor = ctx.createScriptProcessor(bufferSize, 1, 1);
-      processorRef.current = processor;
-      processor.onaudioprocess = (e) => {
-        const sock = socketRef.current;
-        if (!sock?.connected) return;
-        const input = e.inputBuffer.getChannelData(0);
-        const pcm16 = new Int16Array(input.length);
-        for (let i = 0; i < input.length; i++) {
-          const s = Math.max(-1, Math.min(1, input[i]));
-          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        }
-        const b64 = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
-        sock.emit("audioInput", b64);
+      // Play hello.mp3 first so the agent always speaks first, then start agent greeting + mic
+      const helloUrl = `${window.location.origin}/hello.mp3`;
+      const audio = new Audio(helloUrl);
+      const doAfterHello = () => {
+        socket.emit("textInput", {
+          role: "user",
+          content: "[The caller has just connected. Greet them warmly and ask how you can help.]",
+        });
+        const stream = micStreamRef.current;
+        if (!stream) return;
+        const INPUT_SAMPLE_RATE = 16000;
+        const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)({
+          sampleRate: INPUT_SAMPLE_RATE,
+        });
+        audioContextRef.current = ctx;
+        if (ctx.state === "suspended") ctx.resume();
+        const source = ctx.createMediaStreamSource(stream);
+        sourceNodeRef.current = source;
+        const bufferSize = 4096;
+        const processor = ctx.createScriptProcessor(bufferSize, 1, 1);
+        processorRef.current = processor;
+        processor.onaudioprocess = (e) => {
+          const sock = socketRef.current;
+          if (!sock?.connected) return;
+          const input = e.inputBuffer.getChannelData(0);
+          const pcm16 = new Int16Array(input.length);
+          for (let i = 0; i < input.length; i++) {
+            const s = Math.max(-1, Math.min(1, input[i]));
+            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+          }
+          const b64 = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
+          sock.emit("audioInput", b64);
+        };
+        source.connect(processor);
+        processor.connect(ctx.destination);
       };
-      source.connect(processor);
-      processor.connect(ctx.destination);
+      audio.onended = doAfterHello;
+      audio.onerror = () => doAfterHello();
+      audio.play().catch(() => doAfterHello());
     });
 
     const OUTPUT_SAMPLE_RATE = 24000;
@@ -688,35 +701,31 @@ const ShareableLink = () => {
     });
 
     // Surface Nova Sonic tool use / results in the UI for debugging.
-    socket.on("toolUse", (data: any) => {
+    type ToolUsePayload = { toolName?: string; toolUseId?: string };
+    type ToolResultPayload = { toolName?: string; toolUseId?: string; result?: { error?: string } };
+    socket.on("toolUse", (data: ToolUsePayload) => {
       const toolName = data?.toolName || "unknown-tool";
       const id = data?.toolUseId || `${Date.now()}-use`;
       setVoiceToolEvents((prev) =>
         [
-          {
-            id,
-            ts: Date.now(),
-            type: "use",
-            toolName,
-          },
+          { id, ts: Date.now(), type: "use" as const, toolName },
           ...prev,
         ].slice(0, 10)
       );
     });
 
-    socket.on("toolResult", (data: any) => {
+    socket.on("toolResult", (data: ToolResultPayload) => {
       const toolName = data?.toolName || "unknown-tool";
-      const result = (data as any)?.result ?? data;
-      const error = result?.error as string | undefined;
-      const id = (data as any)?.toolUseId || `${Date.now()}-result`;
+      const error = data?.result?.error;
+      const id = data?.toolUseId || `${Date.now()}-result`;
       setVoiceToolEvents((prev) =>
         [
           {
             id,
             ts: Date.now(),
-            type: "result",
+            type: "result" as const,
             toolName,
-            status: error ? "error" : "ok",
+            status: error ? ("error" as const) : ("ok" as const),
             message: error,
           },
           ...prev,
@@ -745,7 +754,7 @@ const ShareableLink = () => {
 
   if (isEmbed) {
     return (
-      <div ref={themeContainerRef} className="min-h-[540px] h-full w-full flex flex-col bg-background p-2 overflow-auto">
+      <div style={shareableThemeStyle} className="min-h-[540px] h-full w-full flex flex-col bg-background p-2 overflow-auto">
         <Card className="flex-1 flex flex-col min-h-0 overflow-hidden border border-border bg-card/70 backdrop-blur-sm">
           <CardHeader className="pb-2 py-3">
             <CardTitle className="font-display text-lg">Chat & Voice</CardTitle>
@@ -796,7 +805,7 @@ const ShareableLink = () => {
   }
 
   return (
-    <div ref={themeContainerRef} className="min-h-screen bg-background bg-grid relative overflow-hidden">
+    <div style={shareableThemeStyle} className="min-h-screen bg-background bg-grid relative overflow-hidden">
       <div className="absolute inset-0 bg-radial-glow pointer-events-none" />
 
       <div className="relative z-10 mx-auto w-full max-w-lg px-4 py-10">

@@ -913,7 +913,7 @@ function setupSessionHandlers(session, socket) {
 
 async function classifySalesCall(transcript) {
   if (!transcript || transcript.trim().length < 10) {
-    return { summary: "Call was too short to classify.", classification: "cold" };
+    return { summary: "Call was too short to classify.", classification: "cold", callbackRequested: false, callbackPreferredTime: null };
   }
 
   try {
@@ -933,9 +933,10 @@ async function classifySalesCall(transcript) {
    - "warm": Somewhat interested, didn't reject outright, may follow up
    - "cold": Not interested right now but was polite about it
    - "not_interested": Firmly declined, asked not to be called, or was hostile
+3. If the prospect said they want a callback or to be called back (and optionally gave a preferred time), set callbackRequested to true and callbackPreferredTime to the time they said (e.g. "tomorrow 3pm", "next week morning") or empty string if they didn't give a time.
 
 Return your response as valid JSON only, no markdown:
-{"summary": "...", "classification": "hot|warm|cold|not_interested"}
+{"summary": "...", "classification": "hot|warm|cold|not_interested", "callbackRequested": false, "callbackPreferredTime": ""}
 
 Transcript:
 ${transcript.slice(0, 4000)}`
@@ -943,11 +944,10 @@ ${transcript.slice(0, 4000)}`
           ]
         }
       ],
-      inferenceConfig: { maxTokens: 300, temperature: 0.1 },
+      inferenceConfig: { maxTokens: 400, temperature: 0.1 },
     }));
 
     const text = response.output?.message?.content?.[0]?.text || "";
-    // Try to parse JSON from the response
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
@@ -956,12 +956,14 @@ ${transcript.slice(0, 4000)}`
         classification: ["hot", "warm", "cold", "not_interested"].includes(parsed.classification)
           ? parsed.classification
           : "cold",
+        callbackRequested: parsed.callbackRequested === true,
+        callbackPreferredTime: typeof parsed.callbackPreferredTime === "string" ? parsed.callbackPreferredTime.trim() || null : null,
       };
     }
-    return { summary: text.slice(0, 300), classification: "cold" };
+    return { summary: text.slice(0, 300), classification: "cold", callbackRequested: false, callbackPreferredTime: null };
   } catch (err) {
     console.error("[classifySalesCall] Error:", err.message);
-    return { summary: "Classification failed: " + err.message, classification: "cold" };
+    return { summary: "Classification failed: " + err.message, classification: "cold", callbackRequested: false, callbackPreferredTime: null };
   }
 }
 
@@ -1269,12 +1271,12 @@ io.on("connection", (socket) => {
         ),
       ]).catch(() => {});
 
-      // Finalize recording and deduct voice credits
+      // Finalize recording and deduct voice credits (skip for salesbot — internal use, no credits)
       const recorder = socketRecorders.get(socket.id);
       const config = socketConfigs.get(socket.id);
       if (recorder) {
-        // Deduct voice credits: 3 credits per minute
-        if (CREDITS_TABLE && ddbDoc && config?.handle) {
+        // Deduct voice credits: 3 credits per minute (not for sales/outbound calls)
+        if (CREDITS_TABLE && ddbDoc && config?.handle && config?.callType !== "sales") {
           try {
             const durationSeconds = recorder.getDurationSeconds();
             const durationMinutes = Math.ceil(durationSeconds / 60);
@@ -1332,7 +1334,7 @@ io.on("connection", (socket) => {
           // Run classification async (don't block session cleanup)
           (async () => {
             try {
-              const { summary, classification } = await classifySalesCall(transcript);
+              const { summary, classification, callbackRequested, callbackPreferredTime } = await classifySalesCall(transcript);
               console.log(`[salesbot] Classification: ${classification} | Summary: ${summary.slice(0, 100)}`);
               await postSalesbotWebhook({
                 campaignId: config.campaignId,
@@ -1342,6 +1344,8 @@ io.on("connection", (socket) => {
                 transcript: transcript.slice(0, 5000),
                 durationSeconds,
                 callUniqueId: config.callUniqueId || null,
+                callbackRequested: callbackRequested || undefined,
+                callbackPreferredTime: callbackPreferredTime || undefined,
               });
             } catch (err) {
               console.error("[salesbot] Post-call processing error:", err.message);

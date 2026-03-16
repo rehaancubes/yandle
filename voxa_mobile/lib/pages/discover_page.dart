@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
-import 'package:url_launcher/url_launcher.dart';
 
 import '../api_config.dart';
 import 'business_detail_page.dart';
@@ -34,7 +33,6 @@ class _DiscoverPageState extends State<DiscoverPage> {
     _DiscoverFilter(label: 'All', category: ''),
     _DiscoverFilter(label: 'Gaming Cafe', category: 'gaming_cafe'),
     _DiscoverFilter(label: 'Salon', category: 'salon'),
-    _DiscoverFilter(label: 'Clinic', category: 'clinic'),
     _DiscoverFilter(label: 'General', category: 'general'),
     _DiscoverFilter(label: 'Customer Support', category: 'customer_support'),
   ];
@@ -165,36 +163,6 @@ class _DiscoverPageState extends State<DiscoverPage> {
     }
   }
 
-  Future<void> _callBusiness(DiscoveryResult r) async {
-    final phone = r.phoneNumber;
-    if (phone == null || phone.isEmpty) return;
-    final uri = Uri.parse('tel:$phone');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri);
-    }
-  }
-
-  Widget _listPlaceholder(String initial) {
-    return Container(
-      width: 56,
-      height: 56,
-      decoration: BoxDecoration(
-        color: const Color(0xFF4F46E5).withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Center(
-        child: Text(
-          initial,
-          style: const TextStyle(
-            color: Color(0xFF4F46E5),
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-          ),
-        ),
-      ),
-    );
-  }
-
   void _openBusinessDetails(DiscoveryResult r) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -219,259 +187,252 @@ class _DiscoverPageState extends State<DiscoverPage> {
     );
   }
 
+  List<DiscoveryResult> _sortedResults() {
+    final list = List<DiscoveryResult>.from(_results);
+    list.sort((a, b) {
+      final da = a.distanceKm ?? double.infinity;
+      final db = b.distanceKm ?? double.infinity;
+      return da.compareTo(db);
+    });
+    return list;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    const themeColor = Color(0xFF4F46E5);
+    const cardBg = Color(0xFF0F172A);
+    const borderColor = Color(0xFF1E293B);
+    const surface = Color(0xFF1E293B);
 
     return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF020617), Color(0xFF020617)],
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-        ),
-      ),
+      color: const Color(0xFF020617),
       child: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Discover nearby',
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
+            Column(
+              children: [
+                // Header: title center, filter right (ref: Local Services + filter icon)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 12, 16, 8),
+                  child: Row(
+                    children: [
+                      const SizedBox(width: 40),
+                      const Expanded(
+                        child: Text(
+                          'Discover',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () {
+                          // Filter sheet or category picker
+                          setState(() {});
+                        },
+                        icon: const Icon(Icons.tune_rounded, color: Colors.white70, size: 24),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Search or pick a type to find businesses. Nearby places show when location is on.',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: Colors.white70,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
+                ),
+                // Search bar (ref: rounded, search icon, placeholder)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: Container(
+                    height: 44,
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: const Color(0xFF1E293B)),
-                      color: const Color(0xFF020617),
+                      color: surface,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: borderColor),
                     ),
+                    child: TextField(
+                      controller: _queryController,
+                      style: const TextStyle(color: Colors.white, fontSize: 15),
+                      cursorColor: themeColor,
+                      textInputAction: TextInputAction.search,
+                      onSubmitted: (s) => _runSearch(s),
+                      decoration: const InputDecoration(
+                        hintText: 'Search businesses...',
+                        hintStyle: TextStyle(color: Colors.white38, fontSize: 15),
+                        prefixIcon: Icon(Icons.search, color: Colors.white54, size: 22),
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      ),
+                    ),
+                  ),
+                ),
+                // Category filters
+                SizedBox(
+                  height: 36,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: _filters.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 8),
+                    itemBuilder: (context, index) {
+                      final filter = _filters[index];
+                      final isSelected = _selectedCategory == filter.category;
+                      return FilterChip(
+                        label: Text(
+                          filter.label,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: isSelected ? Colors.white : Colors.white70,
+                          ),
+                        ),
+                        selected: isSelected,
+                        onSelected: (_) {
+                          setState(() {
+                            _selectedCategory = filter.category.isEmpty ? null : filter.category;
+                          });
+                          _runSearch(_queryController.text.trim(), category: filter.category.isEmpty ? null : filter.category);
+                        },
+                        backgroundColor: surface,
+                        selectedColor: themeColor,
+                        side: BorderSide(
+                          color: isSelected ? themeColor : borderColor,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                     child: Row(
                       children: [
-                        const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 12),
-                          child: Icon(
-                            Icons.search,
-                            color: Colors.white60,
-                          ),
-                        ),
-                        Expanded(
-                          child: TextField(
-                            controller: _queryController,
-                            style: const TextStyle(color: Colors.white),
-                            cursorColor: Colors.white70,
-                            textInputAction: TextInputAction.search,
-                            onSubmitted: (s) => _runSearch(s),
-                            decoration: const InputDecoration(
-                              hintText: 'Search by name or keyword',
-                              hintStyle: TextStyle(color: Colors.white38),
-                              border: InputBorder.none,
-                            ),
-                          ),
-                        ),
+                        const Icon(Icons.error_outline, color: Colors.redAccent, size: 18),
                         const SizedBox(width: 8),
-                        Padding(
-                          padding: const EdgeInsets.only(right: 10),
-                          child: FilledButton(
-                            onPressed: _isSearching
-                                ? null
-                                : () => _runSearch(_queryController.text.trim()),
-                            style: FilledButton.styleFrom(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 14),
-                              backgroundColor: const Color(0xFF4F46E5),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                            ),
-                            child: _isSearching
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor:
-                                          AlwaysStoppedAnimation(Colors.white),
-                                    ),
-                                  )
-                                : const Text('Search'),
+                        Expanded(
+                          child: Text(
+                            _error!,
+                            style: const TextStyle(color: Colors.redAccent, fontSize: 13),
                           ),
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    height: 36,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _filters.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 8),
-                      itemBuilder: (context, index) {
-                        final filter = _filters[index];
-                        final isSelected = _selectedCategory == filter.category;
-                        return FilterChip(
-                          label: Text(
-                            filter.label,
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: isSelected
-                                    ? Colors.white
-                                    : Colors.white70),
-                          ),
-                          selected: isSelected,
-                          onSelected: (_) {
-                            setState(() => _selectedCategory =
-                                filter.category.isEmpty ? null : filter.category);
-                            _runSearch(_queryController.text.trim(),
-                                category: filter.category.isEmpty
-                                    ? null
-                                    : filter.category);
-                          },
-                          backgroundColor: const Color(0xFF020617),
-                          selectedColor: const Color(0xFF4F46E5),
-                          side: BorderSide(
-                            color: isSelected
-                                ? const Color(0xFF4F46E5)
-                                : const Color(0xFF1E293B),
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (_error != null)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                child: Row(
-                  children: [
-                    const Icon(Icons.error_outline,
-                        color: Colors.redAccent, size: 18),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _error!,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: Colors.redAccent,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            Expanded(
-              child: _results.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            _isSearching
-                                ? Icons.manage_search_rounded
-                                : Icons.location_on_outlined,
-                            color: Colors.white12,
-                            size: 52,
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            _isSearching
-                                ? 'Finding places for you…'
-                                : 'Search or tap a type above. Turn on location to see nearby places.',
-                            style: theme.textTheme.bodyMedium
-                                ?.copyWith(color: Colors.white38),
-                            textAlign: TextAlign.center,
-                          ),
-                        ],
-                      ),
-                    )
-                  : ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                      itemCount: _results.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 10),
-                      itemBuilder: (context, index) {
-                        final r = _results[index];
-                        final baseName =
-                            r.businessName ?? r.displayName ?? r.handle;
-                        final name = (r.locationName != null &&
-                                r.locationName!.isNotEmpty)
-                            ? '$baseName – ${r.locationName}'
-                            : baseName;
-                        final initial =
-                            name.isNotEmpty ? name[0].toUpperCase() : '?';
-                        return Material(
-                          color: const Color(0xFF0F172A),
-                          borderRadius: BorderRadius.circular(16),
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(16),
-                            onTap: () => _openBusinessDetails(r),
-                            child: Container(
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(
-                                    color: const Color(0xFF1E293B)),
+                Expanded(
+                  child: _results.isEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                _isSearching ? Icons.manage_search_rounded : Icons.location_on_outlined,
+                                color: Colors.white12,
+                                size: 52,
                               ),
-                              child: Column(
-                                crossAxisAlignment:
-                                    CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
+                              const SizedBox(height: 12),
+                              Text(
+                                _isSearching
+                                    ? 'Finding places for you…'
+                                    : 'Search or turn on location to see nearby places.',
+                                style: const TextStyle(color: Colors.white38, fontSize: 14),
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ),
+                        )
+                      : ListView.separated(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 80),
+                          itemCount: _sortedResults().length,
+                          separatorBuilder: (_, __) => const SizedBox(height: 12),
+                          itemBuilder: (context, index) {
+                            final r = _sortedResults()[index];
+                            final baseName = r.businessName ?? r.displayName ?? r.handle;
+                            final name = (r.locationName != null && r.locationName!.isNotEmpty)
+                                ? '$baseName – ${r.locationName}'
+                                : baseName;
+                            final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
+                            final imageUrl = r.imageUrl;
+                            return Material(
+                              color: cardBg,
+                              borderRadius: BorderRadius.circular(14),
+                              clipBehavior: Clip.antiAlias,
+                              child: InkWell(
+                                onTap: () => _openBusinessDetails(r),
+                                child: Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(14),
+                                    border: Border.all(color: borderColor),
+                                  ),
+                                  child: Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       ClipRRect(
-                                        borderRadius: BorderRadius.circular(12),
-                                        child: r.imageUrl != null &&
-                                                r.imageUrl!.isNotEmpty
+                                        borderRadius: BorderRadius.circular(10),
+                                        child: imageUrl != null && imageUrl.isNotEmpty
                                             ? Image.network(
-                                                r.imageUrl!,
-                                                width: 56,
-                                                height: 56,
+                                                imageUrl,
+                                                width: 88,
+                                                height: 88,
                                                 fit: BoxFit.cover,
                                                 loadingBuilder: (_, child, progress) {
                                                   if (progress == null) return child;
                                                   return Container(
-                                                    width: 56,
-                                                    height: 56,
-                                                    color: const Color(0xFF1E293B),
+                                                    width: 88,
+                                                    height: 88,
+                                                    color: surface,
                                                     child: const Center(
                                                       child: SizedBox(
-                                                        width: 20,
-                                                        height: 20,
-                                                        child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF4F46E5)),
+                                                        width: 24,
+                                                        height: 24,
+                                                        child: CircularProgressIndicator(strokeWidth: 2, color: themeColor),
                                                       ),
                                                     ),
                                                   );
                                                 },
-                                                errorBuilder: (_, __, ___) =>
-                                                    _listPlaceholder(initial),
+                                                errorBuilder: (_, __, ___) => Container(
+                                                  width: 88,
+                                                  height: 88,
+                                                  decoration: BoxDecoration(
+                                                    color: themeColor.withValues(alpha: 0.15),
+                                                    borderRadius: BorderRadius.circular(10),
+                                                  ),
+                                                  child: Center(
+                                                    child: Text(
+                                                      initial,
+                                                      style: const TextStyle(
+                                                        color: themeColor,
+                                                        fontWeight: FontWeight.bold,
+                                                        fontSize: 22,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
                                               )
-                                            : _listPlaceholder(initial),
+                                            : Container(
+                                                width: 88,
+                                                height: 88,
+                                                decoration: BoxDecoration(
+                                                  color: themeColor.withValues(alpha: 0.15),
+                                                  borderRadius: BorderRadius.circular(10),
+                                                ),
+                                                child: Center(
+                                                  child: Text(
+                                                    initial,
+                                                    style: const TextStyle(
+                                                      color: themeColor,
+                                                      fontWeight: FontWeight.bold,
+                                                      fontSize: 22,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
                                       ),
                                       const SizedBox(width: 12),
                                       Expanded(
                                         child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
+                                          crossAxisAlignment: CrossAxisAlignment.start,
                                           children: [
                                             Row(
                                               children: [
@@ -479,182 +440,62 @@ class _DiscoverPageState extends State<DiscoverPage> {
                                                   child: Text(
                                                     name,
                                                     style: const TextStyle(
-                                                      fontWeight:
-                                                          FontWeight.w600,
+                                                      fontWeight: FontWeight.w600,
                                                       color: Colors.white,
                                                       fontSize: 15,
                                                     ),
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
                                                   ),
                                                 ),
-                                                if (r.distanceKm != null)
-                                                  Text(
-                                                    '${r.distanceKm!.toStringAsFixed(1)} km',
-                                                    style: const TextStyle(
-                                                        color: Colors.white38,
-                                                        fontSize: 11),
-                                                  ),
+                                                IconButton(
+                                                  padding: EdgeInsets.zero,
+                                                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                                  icon: const Icon(Icons.favorite_border_rounded, color: Colors.white38, size: 20),
+                                                  onPressed: () {},
+                                                ),
                                               ],
                                             ),
-                                            if (r.category != null &&
-                                                r.category!.isNotEmpty)
-                                              Padding(
-                                                padding:
-                                                    const EdgeInsets.only(
-                                                        top: 2),
-                                                child: Text(
-                                                  r.category!,
-                                                  style: const TextStyle(
-                                                    color:
-                                                        Color(0xFF4F46E5),
-                                                    fontSize: 12,
-                                                    fontWeight:
-                                                        FontWeight.w500,
+                                            if (r.distanceKm != null) ...[
+                                              const SizedBox(height: 4),
+                                              Row(
+                                                children: [
+                                                  const Icon(Icons.place_outlined, color: Colors.white38, size: 14),
+                                                  const SizedBox(width: 4),
+                                                  Text(
+                                                    '${r.distanceKm!.toStringAsFixed(1)} km away',
+                                                    style: const TextStyle(color: Colors.white54, fontSize: 12),
                                                   ),
-                                                ),
+                                                ],
                                               ),
-                                            if (r.address != null &&
-                                                r.address!.isNotEmpty)
-                                              Padding(
-                                                padding:
-                                                    const EdgeInsets.only(
-                                                        top: 3),
-                                                child: Row(
-                                                  children: [
-                                                    const Icon(
-                                                        Icons.place_outlined,
-                                                        color:
-                                                            Colors.white38,
-                                                        size: 12),
-                                                    const SizedBox(width: 3),
-                                                    Expanded(
-                                                      child: Text(
-                                                        [
-                                                          r.address,
-                                                          if (r.city !=
-                                                                  null &&
-                                                              r.city!
-                                                                  .isNotEmpty)
-                                                            r.city
-                                                        ].join(', '),
-                                                        style:
-                                                            const TextStyle(
-                                                          color:
-                                                              Colors.white54,
-                                                          fontSize: 12,
-                                                        ),
-                                                        maxLines: 1,
-                                                        overflow: TextOverflow
-                                                            .ellipsis,
-                                                      ),
-                                                    ),
-                                                  ],
+                                            ],
+                                            const SizedBox(height: 6),
+                                            Row(
+                                              children: [
+                                                if (r.category != null && r.category!.isNotEmpty)
+                                                  Text(
+                                                    r.category!,
+                                                    style: const TextStyle(color: themeColor, fontSize: 12, fontWeight: FontWeight.w600),
+                                                  ),
+                                                const Spacer(),
+                                                Text(
+                                                  'Book',
+                                                  style: const TextStyle(color: themeColor, fontSize: 13, fontWeight: FontWeight.w600),
                                                 ),
-                                              ),
+                                              ],
+                                            ),
                                           ],
                                         ),
                                       ),
                                     ],
                                   ),
-                                  if (r.realtimeAvailability
-                                              ?.hasWalkInSlots ==
-                                          true ||
-                                      r.realtimeAvailability
-                                              ?.supportsUrgentCases ==
-                                          true ||
-                                      r.hasAiPhone == true) ...[
-                                    const SizedBox(height: 10),
-                                    Wrap(
-                                      spacing: 6,
-                                      runSpacing: 4,
-                                      children: [
-                                        if (r.realtimeAvailability
-                                                ?.hasWalkInSlots ==
-                                            true)
-                                          const _AvailabilityPill(
-                                            label: 'Walk-ins welcome',
-                                            color: Color(0xFF22C55E),
-                                          ),
-                                        if (r.realtimeAvailability
-                                                ?.supportsUrgentCases ==
-                                            true)
-                                          const _AvailabilityPill(
-                                            label: 'Urgent / late-night',
-                                            color: Color(0xFFF97316),
-                                          ),
-                                        if (r.hasAiPhone == true)
-                                          const _AvailabilityPill(
-                                            label: 'AI phone',
-                                            color: Color(0xFF4F46E5),
-                                          ),
-                                      ],
-                                    ),
-                                  ],
-                                  const SizedBox(height: 12),
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: FilledButton.icon(
-                                          onPressed: () =>
-                                              _openBusinessDetails(r),
-                                          icon: const Icon(
-                                              Icons.calendar_today, size: 15),
-                                          label: const Text('Book'),
-                                          style: FilledButton.styleFrom(
-                                            backgroundColor:
-                                                const Color(0xFF4F46E5),
-                                            padding: const EdgeInsets
-                                                .symmetric(
-                                                    horizontal: 14,
-                                                    vertical: 8),
-                                            textStyle: const TextStyle(
-                                                fontSize: 13,
-                                                fontWeight:
-                                                    FontWeight.w600),
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      OutlinedButton.icon(
-                                        onPressed: () =>
-                                            _openBusinessDetails(r),
-                                        icon: const Icon(
-                                            Icons.chat_bubble_outline,
-                                            size: 15),
-                                        label: const Text('Text'),
-                                        style: OutlinedButton.styleFrom(
-                                          foregroundColor:
-                                              const Color(0xFF4F46E5),
-                                          side: const BorderSide(
-                                              color: Color(0xFF4F46E5)),
-                                          padding: const EdgeInsets
-                                              .symmetric(
-                                                  horizontal: 12,
-                                                  vertical: 8),
-                                          textStyle: const TextStyle(
-                                              fontSize: 13,
-                                              fontWeight:
-                                                  FontWeight.w500),
-                                        ),
-                                      ),
-                                      if (r.phoneNumber != null &&
-                                          r.phoneNumber!.isNotEmpty) ...[
-                                        const SizedBox(width: 8),
-                                        IconButton(
-                                          onPressed: () => _callBusiness(r),
-                                          icon: const Icon(Icons.call,
-                                              size: 20,
-                                              color: Color(0xFF4F46E5)),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ],
+                                ),
                               ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+                            );
+                          },
+                        ),
+                ),
+              ],
             ),
           ],
         ),
@@ -724,7 +565,10 @@ class DiscoveryResult {
       branchId: json['branchId'] as String?,
       centerId: json['centerId'] as String?,
       locationName: json['locationName'] as String?,
-      imageUrl: json['imageUrl'] as String?,
+      imageUrl: (json['imageUrl'] as String?) ??
+          ((json['galleryImages'] is List && (json['galleryImages'] as List).isNotEmpty)
+              ? (json['galleryImages'] as List).first as String?
+              : null),
     );
   }
 }
@@ -745,45 +589,3 @@ class RealtimeAvailability {
     );
   }
 }
-
-class _AvailabilityPill extends StatelessWidget {
-  const _AvailabilityPill({
-    required this.label,
-    required this.color,
-  });
-
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 6,
-            height: 6,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-            ),
-          ),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: color,
-                ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-

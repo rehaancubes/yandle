@@ -414,8 +414,8 @@ STEP 0 — Welcome (currently visible). Greet them warmly. Briefly explain YANDL
 STEP 1 — Phone Number. The screen shows available phone numbers. Ask "Would you like to pick an AI phone number for your business? Customers will be able to call it." WAIT for the user to either pick a number on screen or say they want to skip. Do NOT advance until they explicitly say they've picked one or want to skip. Then ask "Ready to move on?" and only advance after confirmation:
    → field="goToStep" value="2"
 
-STEP 2 — Business Type. Ask what type of business they have. Options: Gaming Cafe, Salon, Clinic, General Business, or Customer Support. Wait for their answer.
-   → field="businessType" value="<id>" where id is one of: gaming_cafe, salon, clinic, general, customer_support
+STEP 2 — Business Type. Ask what type of business they have. Options: Gaming Cafe, Salon, General Business, or Customer Support. Wait for their answer.
+   → field="businessType" value="<id>" where id is one of: gaming_cafe, salon, general, customer_support
    After setting the type, confirm: "I've set your business type to [type]. Is that correct?"
    (This auto-shows step 2 briefly, then advances to step 3)
 
@@ -425,15 +425,14 @@ STEP 3 — Handle. Suggest a URL handle based on their business name/type (e.g. 
    Only after they confirm: field="goToStep" value="4"
 
 STEP 4 — Business Details. First set the business name:
-   → salon: field="salon_name" | clinic: field="clinic_name" | gaming_cafe: field="brand_name" | general or customer_support: field="business_name"
+   → salon: field="salon_name" | gaming_cafe: field="brand_name" | general or customer_support: field="business_name"
    Confirm the name before continuing to type-specific details.
 
    Then collect type-specific details:
    SALON → Ask about branches: field="addBranch" value='{"name":"...","address":"..."}'
      Then services at that branch: field="addService" value='{"name":"...","gender":"unisex","price":500,"duration":30}'
      After each service, ask "Want to add another service, or are we good?"
-   CLINIC → Doctors: field="addDoctor" value='{"name":"...","specialty":"...","avgConsultMinutes":15}'
-     After each doctor, ask "Want to add another doctor?"
+   (CLINIC is disabled for now.)
    GAMING_CAFE → Locations: field="addGamingLocation" value='{"name":"...","address":"...","machines":[{"type":"High-end PC","qty":10,"pricePerHour":200}]}'
    GENERAL → Locations: field="addLocation" value='{"name":"...","address":"..."}'
    CUSTOMER_SUPPORT → Categories: field="addSupportCategory" value="Billing" (once per category)
@@ -456,28 +455,34 @@ RULES:
     socket.emit("audioStart");
 
     socket.once("audioReady", () => {
-      socket.emit("textInput", { role: "user", content: "[The user just started voice onboarding. Greet them and ask what type of business they have.]" });
-      setIsVoiceActive(true);
-      setVoiceConnecting(false);
-
-      const stream = voiceMicRef.current;
-      if (!stream) return;
-      const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)({ sampleRate: 16000 });
-      voiceCtxRef.current = ctx;
-      if (ctx.state === "suspended") ctx.resume();
-      const source = ctx.createMediaStreamSource(stream);
-      const processor = ctx.createScriptProcessor(4096, 1, 1);
-      voiceProcessorRef.current = processor;
-      processor.onaudioprocess = (e) => {
-        const sock = voiceSocketRef.current;
-        if (!sock?.connected) return;
-        const inp = e.inputBuffer.getChannelData(0);
-        const pcm = new Int16Array(inp.length);
-        for (let i = 0; i < inp.length; i++) { const s = Math.max(-1, Math.min(1, inp[i])); pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff; }
-        sock.emit("audioInput", btoa(String.fromCharCode(...new Uint8Array(pcm.buffer))));
+      const doAfterHello = () => {
+        socket.emit("textInput", { role: "user", content: "[The user just started voice onboarding. Greet them and ask what type of business they have.]" });
+        setIsVoiceActive(true);
+        setVoiceConnecting(false);
+        const stream = voiceMicRef.current;
+        if (!stream) return;
+        const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)({ sampleRate: 16000 });
+        voiceCtxRef.current = ctx;
+        if (ctx.state === "suspended") ctx.resume();
+        const source = ctx.createMediaStreamSource(stream);
+        const processor = ctx.createScriptProcessor(4096, 1, 1);
+        voiceProcessorRef.current = processor;
+        processor.onaudioprocess = (e) => {
+          const sock = voiceSocketRef.current;
+          if (!sock?.connected) return;
+          const inp = e.inputBuffer.getChannelData(0);
+          const pcm = new Int16Array(inp.length);
+          for (let i = 0; i < inp.length; i++) { const s = Math.max(-1, Math.min(1, inp[i])); pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff; }
+          sock.emit("audioInput", btoa(String.fromCharCode(...new Uint8Array(pcm.buffer))));
+        };
+        source.connect(processor);
+        processor.connect(ctx.destination);
       };
-      source.connect(processor);
-      processor.connect(ctx.destination);
+      const helloUrl = `${window.location.origin}/hello.mp3`;
+      const audio = new Audio(helloUrl);
+      audio.onended = doAfterHello;
+      audio.onerror = () => doAfterHello();
+      audio.play().catch(() => doAfterHello());
     });
 
     socket.on("audioOutput", (data: { content?: string }) => {
@@ -635,16 +640,17 @@ RULES:
               }
             }
           }
-        } else if (selectedCase.id === "clinic" && bizData.doctors.length > 0) {
-          await Promise.all(bizData.doctors.map((doc) =>
-            fetch(`${apiBase}/doctors`, {
-              method: "POST",
-              headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-              body: JSON.stringify({
-                handle: normalizedHandle, name: doc.name, specialty: doc.specialty, avgConsultMinutes: doc.avgConsultMinutes,
-              }),
-            })
-          ));
+        // Clinic use case commented out for now
+        // } else if (selectedCase.id === "clinic" && bizData.doctors.length > 0) {
+        //   await Promise.all(bizData.doctors.map((doc) =>
+        //     fetch(`${apiBase}/doctors`, {
+        //       method: "POST",
+        //       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        //       body: JSON.stringify({
+        //         handle: normalizedHandle, name: doc.name, specialty: doc.specialty, avgConsultMinutes: doc.avgConsultMinutes,
+        //       }),
+        //     })
+        //   ));
         } else if (selectedCase.id === "general" && bizData.generalLocations.length > 0) {
           await Promise.all(bizData.generalLocations.map(async (loc) => {
             await fetch(`${apiBase}/locations`, {
@@ -867,14 +873,14 @@ RULES:
     if (step >= 4) {
       const stepTitle = selectedCase?.id === "gaming_cafe" ? "Locations & Machines"
         : selectedCase?.id === "salon" ? "Branches & Services"
-        : selectedCase?.id === "clinic" ? "Doctors"
+        // : selectedCase?.id === "clinic" ? "Doctors"
         : selectedCase?.id === "general" ? "Business Details"
         : selectedCase?.id === "customer_support" ? "Support Setup"
         : "Setup";
 
       const stepDesc = selectedCase?.id === "gaming_cafe" ? "Add your gaming locations and the machines available at each."
         : selectedCase?.id === "salon" ? "Add branches and the services offered at each."
-        : selectedCase?.id === "clinic" ? "Add your doctors and their consultation details."
+        // : selectedCase?.id === "clinic" ? "Add your doctors and their consultation details."
         : selectedCase?.id === "general" ? "Add your business details and locations."
         : selectedCase?.id === "customer_support" ? "Configure support categories and SLA settings."
         : "";
@@ -926,9 +932,11 @@ RULES:
           {selectedCase?.id === "salon" && (
             <SalonSetup branches={bizData.branches} onChange={(branches) => setBizData((b) => ({ ...b, branches }))} />
           )}
+          {/* Clinic use case commented out for now
           {selectedCase?.id === "clinic" && (
             <ClinicSetup doctors={bizData.doctors} onChange={(doctors) => setBizData((b) => ({ ...b, doctors }))} />
           )}
+          */}
           {selectedCase?.id === "general" && (
             <GeneralSetup locations={bizData.generalLocations} onChange={(locs) => setBizData((b) => ({ ...b, generalLocations: locs }))} />
           )}

@@ -252,7 +252,7 @@ function startSonicStream(uuid, callInfo = {}, options = {}) {
 
   socket.on("audioReady", () => {
     audioReady = true;
-    if (onReady) onReady();
+    // onReady (e.g. play hello) is called and awaited in runFlow after this Promise resolves
   });
 
   socket.on("audioOutput", (data) => {
@@ -305,11 +305,13 @@ function startSonicStream(uuid, callInfo = {}, options = {}) {
       let voiceId, systemPrompt, knowledgeBaseId;
 
       if (isSalesCall) {
-        // Sales call — use sales system prompt, no profile fetch needed
+        // Sales call — use BMS outbound config if provided, else defaults
         console.log(`📤 Sales call setup | CALL=${uuid} | Target=${callInfo.businessName || callInfo.caller}`);
-        voiceId = "tiffany"; // Friendly female voice for sales
-        knowledgeBaseId = "";
-        systemPrompt = buildSalesSystemPrompt(callInfo);
+        voiceId = (callInfo.voiceId && callInfo.voiceId.trim()) ? callInfo.voiceId.trim() : "tiffany";
+        knowledgeBaseId = (callInfo.knowledgeBaseId && callInfo.knowledgeBaseId.trim()) ? callInfo.knowledgeBaseId.trim() : "";
+        systemPrompt = (callInfo.systemPrompt && callInfo.systemPrompt.trim())
+          ? callInfo.systemPrompt.trim()
+          : buildSalesSystemPrompt(callInfo);
 
         await init(knowledgeBaseId, {
           callType: "sales",
@@ -351,6 +353,9 @@ function startSonicStream(uuid, callInfo = {}, options = {}) {
         socket.on("audioReady", onReady);
         if (audioReady) resolve();
       });
+
+      // Run transcriber's onReady (e.g. play hello.mp3 / hello.raw) so agent speaks first after greeting
+      if (options.onReady) await Promise.resolve(options.onReady());
 
       // Agent speaks first
       const firstPrompt = isSalesCall

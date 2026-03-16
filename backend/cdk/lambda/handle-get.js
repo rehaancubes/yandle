@@ -67,10 +67,14 @@ exports.handler = async (event) => {
       try {
         const wcResult = await ddb.get({ TableName: process.env.WEBSITE_CONFIG_TABLE, Key: { handle } }).promise();
         const wc = wcResult.Item || {};
-        if (wc.colorTheme) profile.colorTheme = wc.colorTheme;
+        profile.colorTheme = (wc.colorTheme && String(wc.colorTheme).trim()) ? String(wc.colorTheme).trim() : "indigo";
         if (Array.isArray(wc.galleryImages) && wc.galleryImages.length > 0) profile.galleryImages = wc.galleryImages;
         if (wc.heroTagline) profile.heroTagline = wc.heroTagline;
-      } catch (_) {}
+      } catch (_) {
+        profile.colorTheme = profile.colorTheme || "indigo";
+      }
+    } else {
+      profile.colorTheme = profile.colorTheme || "indigo";
     }
 
     const [doctors, locations, services, branches, centers] = await Promise.all([

@@ -88,7 +88,23 @@ exports.handler = async (event) => {
     const method = event.requestContext?.http?.method || "";
     const qs = event.queryStringParameters || {};
 
-    // GET /bms/salesbot/leads?type=salon&location=Bangalore
+    // GET /bms/salesbot/leads?all=1 — list all outbound-call leads (every call including test)
+    if (method === "GET" && path.endsWith("/leads") && qs.all === "1") {
+      const TABLE = process.env.SALES_LEADS_TABLE;
+      if (!TABLE) {
+        return { statusCode: 500, headers, body: JSON.stringify({ error: "SALES_LEADS_TABLE not set" }) };
+      }
+      const limit = Math.min(Number(qs.limit) || 200, 500);
+      const result = await ddb.scan({ TableName: TABLE, Limit: limit }).promise();
+      const items = (result.Items || []).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({ leads: items }),
+      };
+    }
+
+    // GET /bms/salesbot/leads?type=salon&location=Bangalore — Google Places search for lead finder
     if (method === "GET" && path.endsWith("/leads")) {
       const businessType = qs.type;
       const location = qs.location;
@@ -125,7 +141,7 @@ exports.handler = async (event) => {
       const TABLE = process.env.SALES_LEADS_TABLE;
       const now = new Date().toISOString();
 
-      // Batch write in groups of 25
+      // Batch write in groups of 25 (omit callUniqueId — it's a GSI key; null would cause "Type mismatch")
       const items = leads.map((lead) => ({
         campaignId,
         leadId: lead.leadId || generateId(),
@@ -133,14 +149,9 @@ exports.handler = async (event) => {
         phoneNumber: lead.phone || lead.phoneNumber || "",
         address: lead.address || "",
         googlePlaceId: lead.placeId || lead.googlePlaceId || "",
-        rating: lead.rating || null,
-        website: lead.website || null,
+        rating: lead.rating ?? undefined,
+        website: lead.website ?? undefined,
         status: "pending",
-        classification: null,
-        callSummary: null,
-        callDurationSeconds: null,
-        callUniqueId: null,
-        transcript: null,
         createdAt: now,
         updatedAt: now,
       }));

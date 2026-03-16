@@ -9,7 +9,7 @@ const Navbar = () => {
       className="fixed top-0 left-0 right-0 z-50 border-b border-border/50 backdrop-blur-xl bg-background/70"
     >
       <div className="container mx-auto flex items-center justify-between px-6 py-4">
-        <a href="#" className="font-display text-2xl font-bold text-gradient-primary tracking-tight">
+        <a href="/" className="font-display text-2xl font-bold text-gradient-primary tracking-tight">
           YANDLE
         </a>
         <div className="hidden md:flex items-center gap-8">
@@ -24,10 +24,10 @@ const Navbar = () => {
           </a>
         </div>
         <a
-          href="#cta"
+          href="/onboarding"
           className="rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:opacity-90 glow-primary"
         >
-          Get Early Access
+          Get Started
         </a>
       </div>
     </motion.nav>

@@ -32,9 +32,9 @@ const HeroSection = () => {
           transition={{ duration: 0.8, delay: 0.3 }}
           className="font-display text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold tracking-tight leading-[1.05] mb-6"
         >
-          Your AI Conversation
+          Make your business
           <br />
-          <span className="text-gradient-primary glow-text">Link</span>
+          <span className="text-gradient-primary glow-text">smarter</span>
         </motion.h1>
 
         <motion.p
@@ -43,8 +43,7 @@ const HeroSection = () => {
           transition={{ duration: 0.8, delay: 0.4 }}
           className="mx-auto max-w-2xl text-lg sm:text-xl text-muted-foreground mb-10 leading-relaxed"
         >
-          Turn yourself or your business into a live AI endpoint.
-          Share a link — anyone can talk or text your AI in real time.
+          A phone number, website, AI chat widget, and voice. Customers call, text, or visit — your AI handles it.
         </motion.p>
 
         {/* Link preview */}
@@ -61,7 +60,7 @@ const HeroSection = () => {
               <div className="h-3 w-3 rounded-full bg-primary/10" />
             </div>
             <div className="rounded-lg bg-secondary/50 px-4 py-3 font-mono text-sm sm:text-base text-foreground">
-              yandle.ai/<span className="text-primary font-semibold">yourname</span>
+              yandle.io/<span className="text-primary font-semibold">yourhandle</span>
             </div>
             <div className="flex gap-3 mt-4">
               <button className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-primary/10 border border-primary/20 py-2.5 text-sm font-medium text-primary transition-all hover:bg-primary/20">

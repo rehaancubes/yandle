@@ -1,4 +1,5 @@
 const AWS = require("aws-sdk");
+const { assertAccess, getCallerFromEvent } = require("./auth-helper");
 
 const ddb = new AWS.DynamoDB.DocumentClient();
 
@@ -9,21 +10,9 @@ function normalizeHandle(raw) {
     .replace(/^-+|-+$/g, "");
 }
 
-async function assertOwner(handle, sub) {
-  if (!process.env.HANDLES_TABLE) return;
-  const result = await ddb.get({
-    TableName: process.env.HANDLES_TABLE,
-    Key: { handle }
-  }).promise();
-  const item = result.Item;
-  if (!item || item.ownerId !== sub) {
-    throw new Error("FORBIDDEN");
-  }
-}
-
 exports.handler = async (event) => {
   try {
-    const sub = event?.requestContext?.authorizer?.jwt?.claims?.sub;
+    const { sub, email } = getCallerFromEvent(event);
     if (!sub) {
       return {
         statusCode: 401,
@@ -39,7 +28,7 @@ exports.handler = async (event) => {
         body: JSON.stringify({ error: "handle is required" })
       };
     }
-    await assertOwner(handle, sub);
+    await assertAccess(handle, sub, email);
 
     const limit = Math.min(Number(event.queryStringParameters?.limit || 50), 200);
     const indexName = process.env.CUSTOMERS_LAST_SEEN_INDEX || "HandleLastSeenIndex";
@@ -72,7 +61,7 @@ exports.handler = async (event) => {
       return {
         statusCode: 403,
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ error: "You do not own this handle." })
+        body: JSON.stringify({ error: "You do not have access to this handle." })
       };
     }
     console.error("[customers-list]", e);

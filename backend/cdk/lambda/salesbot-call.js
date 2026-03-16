@@ -13,15 +13,40 @@ function isSuperAdmin(event) {
 }
 
 /**
+ * Fetch BMS outbound config (system prompt, voice, KB) for the SIP trunk.
+ */
+async function getOutboundConfig() {
+  const table = process.env.BMS_OUTBOUND_CONFIG_TABLE;
+  if (!table) return null;
+  try {
+    const result = await ddb.get({
+      TableName: table,
+      Key: { configKey: "outbound" },
+    }).promise();
+    const item = result.Item;
+    if (!item) return null;
+    return {
+      handle: item.handle || "voxa-salesbot",
+      systemPrompt: item.systemPrompt || "",
+      voiceId: item.voiceId || "tiffany",
+      knowledgeBaseId: item.knowledgeBaseId || "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Originate an outbound call via the SIP trunk server.
  * POST http://<SIP_TRUNK_HOST>:3000/call-originate
+ * Optionally includes outboundConfig (systemPrompt, voiceId, knowledgeBaseId) from BMS.
  */
-async function originateCall({ phoneNumber, campaignId, leadId, businessName, businessType, location }) {
+async function originateCall({ phoneNumber, campaignId, leadId, businessName, businessType, location, outboundConfig }) {
   const sipUrl = process.env.SIP_TRUNK_URL;
   if (!sipUrl) throw new Error("SIP_TRUNK_URL not configured");
 
   const url = new URL("/call-originate", sipUrl);
-  const body = JSON.stringify({
+  const payload = {
     phoneNumber,
     campaignId,
     leadId,
@@ -29,7 +54,13 @@ async function originateCall({ phoneNumber, campaignId, leadId, businessName, bu
     businessType,
     location,
     callType: "sales",
-  });
+  };
+  if (outboundConfig && (outboundConfig.systemPrompt != null || outboundConfig.voiceId != null || outboundConfig.knowledgeBaseId != null)) {
+    payload.systemPrompt = outboundConfig.systemPrompt || "";
+    payload.voiceId = outboundConfig.voiceId || "tiffany";
+    payload.knowledgeBaseId = outboundConfig.knowledgeBaseId || "";
+  }
+  const body = JSON.stringify(payload);
 
   return new Promise((resolve, reject) => {
     const proto = url.protocol === "https:" ? https : http;
@@ -72,7 +103,12 @@ exports.handler = async (event) => {
 
     // POST /bms/salesbot/test-call — single test call
     if (path.endsWith("/test-call")) {
-      const body = JSON.parse(event.body || "{}");
+      let body;
+      try {
+        body = typeof event.body === "string" ? JSON.parse(event.body || "{}") : event.body || {};
+      } catch (e) {
+        return { statusCode: 400, headers, body: JSON.stringify({ error: "Invalid JSON body" }) };
+      }
       const { phoneNumber } = body;
 
       if (!phoneNumber) {
@@ -83,53 +119,94 @@ exports.handler = async (event) => {
         };
       }
 
+      const sipUrl = (process.env.SIP_TRUNK_URL || "").trim();
+      if (!sipUrl || sipUrl.includes("localhost") || sipUrl.startsWith("http://127.0.0.1")) {
+        return {
+          statusCode: 503,
+          headers,
+          body: JSON.stringify({
+            error: "SIP trunk not configured",
+            detail: "Set SIP_TRUNK_URL to your SIP trunk server URL (e.g. https://your-server.com). localhost is not reachable from the server.",
+          }),
+        };
+      }
+
+      if (!LEADS_TABLE) {
+        return {
+          statusCode: 500,
+          headers,
+          body: JSON.stringify({ error: "Server misconfiguration: SALES_LEADS_TABLE not set" }),
+        };
+      }
+
       // Create a test campaign/lead for tracking
       const now = new Date().toISOString();
       const testCampaignId = "test_" + Date.now().toString(36);
       const testLeadId = "test_lead_" + Date.now().toString(36);
 
-      // Store test lead
-      await ddb
-        .put({
-          TableName: LEADS_TABLE,
-          Item: {
-            campaignId: testCampaignId,
-            leadId: testLeadId,
-            businessName: "Test Call",
-            phoneNumber,
-            address: "",
-            googlePlaceId: "",
-            status: "calling",
-            classification: null,
-            callSummary: null,
-            callDurationSeconds: null,
-            callUniqueId: null,
-            createdAt: now,
-            updatedAt: now,
-          },
-        })
-        .promise();
-
-      // Originate the call
-      const result = await originateCall({
-        phoneNumber,
-        campaignId: testCampaignId,
-        leadId: testLeadId,
-        businessName: "Test Call",
-        businessType: "test",
-        location: "test",
-      });
-
-      // Store uniqueId if returned
-      if (result.uniqueid) {
+      try {
+        // Store test lead (omit callUniqueId — it's a GSI key; null would cause "Type mismatch". Add it later via update.)
         await ddb
-          .update({
+          .put({
             TableName: LEADS_TABLE,
-            Key: { campaignId: testCampaignId, leadId: testLeadId },
-            UpdateExpression: "SET callUniqueId = :uid, updatedAt = :now",
-            ExpressionAttributeValues: { ":uid": result.uniqueid, ":now": now },
+            Item: {
+              campaignId: testCampaignId,
+              leadId: testLeadId,
+              businessName: "Test Call",
+              phoneNumber,
+              address: "",
+              googlePlaceId: "",
+              status: "calling",
+              createdAt: now,
+              updatedAt: now,
+            },
           })
           .promise();
+      } catch (dbErr) {
+        console.error("[salesbot-call] test-call DynamoDB put error:", dbErr.message);
+        return {
+          statusCode: 500,
+          headers,
+          body: JSON.stringify({ error: "Failed to create test lead", detail: dbErr.message }),
+        };
+      }
+
+      const outboundConfig = await getOutboundConfig();
+      let result;
+      try {
+        result = await originateCall({
+          phoneNumber,
+          campaignId: testCampaignId,
+          leadId: testLeadId,
+          businessName: "Test Call",
+          businessType: "test",
+          location: "test",
+          outboundConfig,
+        });
+      } catch (originateErr) {
+        console.error("[salesbot-call] test-call originate error:", originateErr.message);
+        return {
+          statusCode: 502,
+          headers,
+          body: JSON.stringify({
+            error: "SIP trunk unreachable",
+            detail: originateErr.code === "ECONNREFUSED" ? "Connection refused. Is the SIP trunk server running and SIP_TRUNK_URL correct?" : originateErr.message,
+          }),
+        };
+      }
+
+      // Store uniqueId if returned
+      if (result && result.uniqueid) {
+        try {
+          await ddb
+            .update({
+              TableName: LEADS_TABLE,
+              Key: { campaignId: testCampaignId, leadId: testLeadId },
+              UpdateExpression: "SET callUniqueId = :uid, updatedAt = :now",
+              ExpressionAttributeValues: { ":uid": result.uniqueid, ":now": now },
+            })
+            .promise();
+        } catch (_) {}
       }
 
       return {
@@ -139,7 +216,7 @@ exports.handler = async (event) => {
           ok: true,
           campaignId: testCampaignId,
           leadId: testLeadId,
-          uniqueid: result.uniqueid || null,
+          uniqueid: (result && result.uniqueid) || null,
         }),
       };
     }
@@ -217,6 +294,7 @@ exports.handler = async (event) => {
       const toCall = pendingLeads.slice(0, slotsAvailable);
       const now = new Date().toISOString();
       const dispatched = [];
+      const outboundConfig = await getOutboundConfig();
 
       for (const lead of toCall) {
         try {
@@ -231,7 +309,7 @@ exports.handler = async (event) => {
             })
             .promise();
 
-          // Originate call
+          // Originate call (include BMS outbound config if set)
           const result = await originateCall({
             phoneNumber: lead.phoneNumber,
             campaignId,
@@ -239,6 +317,7 @@ exports.handler = async (event) => {
             businessName: lead.businessName,
             businessType: campaign.businessType,
             location: campaign.location,
+            outboundConfig,
           });
 
           if (result.uniqueid) {

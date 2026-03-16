@@ -2,10 +2,14 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../api_config.dart';
 import '../services/auth_service.dart';
 import 'auth_page.dart';
+
+/// Web app base URL for legal and help links (privacy, terms, help).
+const String _webBaseUrl = 'https://callcentral.io';
 
 typedef AdminToggleCallback = void Function({
   required String handle,
@@ -93,6 +97,22 @@ class _ProfilePageState extends State<ProfilePage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(res.error ?? 'Failed to link email'), backgroundColor: Colors.redAccent),
       );
+    }
+  }
+
+  Future<void> _openUrl(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open link')),
+        );
+      }
     }
   }
 
@@ -426,6 +446,61 @@ class _ProfilePageState extends State<ProfilePage> {
                       const SizedBox(height: 24),
                     ],
 
+                    // ── Legal & support ────────────────────────────────────
+                    Text(
+                      'Legal & support',
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        color: Colors.white54,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0F172A),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFF1E293B)),
+                      ),
+                      child: Column(
+                        children: [
+                          _ProfileListTile(
+                            icon: Icons.privacy_tip_outlined,
+                            label: 'Privacy Policy',
+                            onTap: () => _openUrl('$_webBaseUrl/privacy'),
+                          ),
+                          const Divider(height: 1, color: Color(0xFF1E293B)),
+                          _ProfileListTile(
+                            icon: Icons.description_outlined,
+                            label: 'Terms of Service',
+                            onTap: () => _openUrl('$_webBaseUrl/terms'),
+                          ),
+                          const Divider(height: 1, color: Color(0xFF1E293B)),
+                          _ProfileListTile(
+                            icon: Icons.help_outline_rounded,
+                            label: 'Help & support',
+                            onTap: () => _openUrl('$_webBaseUrl/help'),
+                          ),
+                          const Divider(height: 1, color: Color(0xFF1E293B)),
+                          _ProfileListTile(
+                            icon: Icons.info_outline_rounded,
+                            label: 'About',
+                            onTap: () => _openUrl('$_webBaseUrl'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Center(
+                      child: Text(
+                        'Version 1.0.0',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: Colors.white38,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+
                     // ── Sign out ──────────────────────────────────────────
                     OutlinedButton.icon(
                       onPressed: _signingOut ? null : _signOut,
@@ -452,6 +527,35 @@ class _ProfilePageState extends State<ProfilePage> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _ProfileListTile extends StatelessWidget {
+  const _ProfileListTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Icon(icon, color: Colors.white54, size: 22),
+      title: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w500,
+          fontSize: 14,
+        ),
+      ),
+      trailing: const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white38, size: 14),
+      onTap: onTap,
     );
   }
 }

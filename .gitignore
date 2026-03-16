@@ -7,9 +7,18 @@ node_modules/
 **/.next/
 **/cdk.out/
 
-# Env
+# Env and secrets
 .env
 .env.local
+.env.*.local
+*.pem
+*.key
 
-# macOS
+# Firebase / mobile secrets (use your own; see voxa_mobile/README)
+voxa_mobile/android/app/google-services.json
+voxa_mobile/ios/Runner/GoogleService-Info.plist
+
+# IDE / misc
+.claude/
+*.zip
 .DS_Store

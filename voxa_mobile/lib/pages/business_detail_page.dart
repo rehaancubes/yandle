@@ -225,7 +225,13 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> {
               profile['businessName'] as String? ?? _resolvedDisplayName;
           _resolvedAddress ??= profile['address'] as String?;
           _resolvedCity ??= profile['city'] as String?;
-          _resolvedPhone ??= profile['phoneNumber'] as String?;
+          // Prefer profile phone from server so purchased number always shows
+          final profilePhone = profile['phoneNumber'] as String?;
+          if (profilePhone != null && profilePhone.trim().isNotEmpty) {
+            _resolvedPhone = profilePhone.trim();
+          } else {
+            _resolvedPhone ??= widget.phoneNumber;
+          }
           _resolvedHasAiPhone =
               (profile['hasAiPhone'] as bool?) ?? _resolvedHasAiPhone;
           _galleryImages = galleryList;
@@ -703,6 +709,28 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> {
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: Colors.white54),
             ),
+          if (_resolvedPhone != null && _resolvedPhone!.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            InkWell(
+              onTap: _callBusiness,
+              borderRadius: BorderRadius.circular(6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.phone_outlined,
+                      size: 16, color: theme.colorScheme.primary),
+                  const SizedBox(width: 6),
+                  Text(
+                    _resolvedPhone!,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.primary,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
           Wrap(
             spacing: 6,

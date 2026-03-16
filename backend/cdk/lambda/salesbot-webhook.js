@@ -16,7 +16,17 @@ exports.handler = async (event) => {
     }
 
     const body = JSON.parse(event.body || "{}");
-    const { campaignId, leadId, summary, classification, transcript, durationSeconds, callUniqueId } = body;
+    const {
+      campaignId,
+      leadId,
+      summary,
+      classification,
+      transcript,
+      durationSeconds,
+      callUniqueId,
+      callbackRequested,
+      callbackPreferredTime,
+    } = body;
 
     if (!campaignId || !leadId) {
       return {
@@ -30,25 +40,44 @@ exports.handler = async (event) => {
     const CAMPAIGNS_TABLE = process.env.SALES_CAMPAIGNS_TABLE;
     const now = new Date().toISOString();
 
-    // Update lead with call results
+    // Build update: required fields + optional callUniqueId (only if set — GSI key cannot be null)
+    const setParts = [
+      "#s = :completed",
+      "classification = :cls",
+      "callSummary = :summary",
+      "callDurationSeconds = :dur",
+      "transcript = :transcript",
+      "callEndedAt = :now",
+      "updatedAt = :now",
+    ];
+    const exprValues = {
+      ":completed": "completed",
+      ":cls": classification || "cold",
+      ":summary": summary || "No summary available",
+      ":dur": durationSeconds || 0,
+      ":transcript": transcript || null,
+      ":now": now,
+    };
+    if (callUniqueId != null && String(callUniqueId).trim()) {
+      setParts.push("callUniqueId = :uid");
+      exprValues[":uid"] = String(callUniqueId).trim();
+    }
+    if (callbackRequested === true || callbackRequested === "true") {
+      setParts.push("callbackRequested = :cbReq");
+      exprValues[":cbReq"] = true;
+    }
+    if (callbackPreferredTime != null && String(callbackPreferredTime).trim()) {
+      setParts.push("callbackPreferredTime = :cbTime");
+      exprValues[":cbTime"] = String(callbackPreferredTime).trim();
+    }
+
     await ddb
       .update({
         TableName: LEADS_TABLE,
         Key: { campaignId, leadId },
-        UpdateExpression:
-          "SET #s = :completed, classification = :cls, callSummary = :summary, " +
-          "callDurationSeconds = :dur, transcript = :transcript, callEndedAt = :now, " +
-          "callUniqueId = :uid, updatedAt = :now",
+        UpdateExpression: "SET " + setParts.join(", "),
         ExpressionAttributeNames: { "#s": "status" },
-        ExpressionAttributeValues: {
-          ":completed": "completed",
-          ":cls": classification || "cold",
-          ":summary": summary || "No summary available",
-          ":dur": durationSeconds || 0,
-          ":transcript": transcript || null,
-          ":now": now,
-          ":uid": callUniqueId || null,
-        },
+        ExpressionAttributeValues: exprValues,
       })
       .promise();
 

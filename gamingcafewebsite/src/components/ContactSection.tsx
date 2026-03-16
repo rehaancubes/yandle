@@ -12,7 +12,7 @@ const ContactSection = () => {
   return (
     <section id="contact" className="py-24 bg-background relative">
       <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
-      <div className="container px-4">
+      <div className="container px-4 mx-auto w-full">
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -26,7 +26,8 @@ const ContactSection = () => {
           </h2>
         </motion.div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 max-w-4xl mx-auto">
+        <div className="w-full flex justify-center">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 w-full max-w-4xl">
           {info.map((item, i) => (
             <motion.div
               key={item.label}
@@ -43,6 +44,7 @@ const ContactSection = () => {
               <p className="font-body text-sm text-foreground">{item.value}</p>
             </motion.div>
           ))}
+          </div>
         </div>
       </div>
     </section>

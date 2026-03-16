@@ -17,7 +17,7 @@ const CTASection = () => {
             Make yourself <span className="text-gradient-primary">accessible</span>.
           </h2>
           <p className="text-lg text-muted-foreground mb-10 max-w-xl mx-auto leading-relaxed">
-            Stop hiding behind forms, emails, and voicemail. Create your YANDLE link and let the world talk to your AI.
+            Get your business website, AI chat, and voice link in one place. Set up in minutes.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <a

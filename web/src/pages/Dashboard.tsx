@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import {
   LayoutDashboard, Link as LinkIcon, Mic, MessageSquare, Settings,
   Share2, Copy, Check, ExternalLink, ChevronLeft, ChevronRight,
-  TrendingUp, User, Building2, Calendar, Users, BookOpen, Plus, Trash2, Loader2,
+  TrendingUp, User, Building2, Calendar as CalendarIcon, Users, BookOpen, Plus, Trash2, Loader2,
   UserPlus, Play, ChevronDown, ChevronUp, X, PhoneCall, XCircle, Globe2, Upload, Image, Coins,
   Phone, Ticket, Headset,
 } from "lucide-react";
@@ -30,6 +30,9 @@ import {
   DialogFooter,
   DialogDescription,
 } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { getUseCaseById, type UseCase, type BusinessType } from "@/lib/onboarding-data";
 import AuthButton from "@/components/auth/AuthButton";
@@ -37,7 +40,7 @@ import { getCurrentUserSub, getOnboardingStorageKey, getCurrentUserEmail, startF
 
 const allNavItems = [
   { id: "overview", label: "Overview", icon: LayoutDashboard, ownerOnly: false, useCases: undefined },
-  { id: "bookings", label: "Bookings", icon: Calendar, ownerOnly: false, useCases: ["gaming_cafe", "salon", "clinic"] as string[] },
+  { id: "bookings", label: "Bookings", icon: CalendarIcon, ownerOnly: false, useCases: ["gaming_cafe", "salon", "clinic"] as string[] },
   { id: "requests", label: "Requests", icon: Phone, ownerOnly: false, useCases: ["general"] as string[] },
   { id: "tickets", label: "Tickets", icon: Ticket, ownerOnly: false, useCases: ["customer_support"] as string[] },
   { id: "customers", label: "Customers", icon: Users, ownerOnly: false, useCases: undefined },
@@ -352,6 +355,7 @@ const Dashboard = () => {
   const [walkInPhone, setWalkInPhone] = useState("");
   const [walkInEmail, setWalkInEmail] = useState("");
   const [walkInStartDate, setWalkInStartDate] = useState("");
+  const [walkInDatePickerOpen, setWalkInDatePickerOpen] = useState(false);
   const [walkInStartTime, setWalkInStartTime] = useState("");
   const [walkInDuration, setWalkInDuration] = useState(60);
   const [walkInBranchId, setWalkInBranchId] = useState("");
@@ -371,6 +375,7 @@ const Dashboard = () => {
     const d = new Date();
     return d.toLocaleDateString("en-CA", { timeZone: "UTC" });
   });
+  const [gridDatePickerOpen, setGridDatePickerOpen] = useState(false);
   const [gridDateBookings, setGridDateBookings] = useState<any[]>([]);
   const [gridDateBookingsLoading, setGridDateBookingsLoading] = useState(false);
 
@@ -821,25 +826,27 @@ const Dashboard = () => {
     ]).catch(() => { setKbPreviewLoading(false); setKbFilesLoading(false); });
   }, [apiBase, yandleHandle, activeNav, useCase?.id]);
 
-  // Website tab: load config
+  // Load website config (including colorTheme) as soon as we have a handle so dashboard theme,
+  // shareable link, and mobile stay in sync without needing to open the Website tab first.
   useEffect(() => {
-    if (!apiBase || !yandleHandle || activeNav !== "website" || websiteConfigLoaded) return;
+    if (!apiBase || !yandleHandle) return;
     const token = localStorage.getItem("yandle_id_token") || "";
     fetch(`${apiBase}/website/config?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
-        if (data?.config) {
-          setWebsiteHeroTagline(data.config.heroTagline || "");
-          setWebsiteAboutText(data.config.aboutText || "");
-          setWebsiteGalleryImages(Array.isArray(data.config.galleryImages) ? data.config.galleryImages : []);
-          setWebsiteColorTheme(data.config.colorTheme || "indigo");
-          setWebsiteContactEmail(data.config.contactEmail || "");
-          setWebsiteSocialLinks(data.config.socialLinks || {});
+        const config = data?.config ?? data;
+        if (config) {
+          setWebsiteHeroTagline(config.heroTagline || "");
+          setWebsiteAboutText(config.aboutText || "");
+          setWebsiteGalleryImages(Array.isArray(config.galleryImages) ? config.galleryImages : []);
+          setWebsiteColorTheme(config.colorTheme || "indigo");
+          setWebsiteContactEmail(config.contactEmail || "");
+          setWebsiteSocialLinks(config.socialLinks || {});
         }
         setWebsiteConfigLoaded(true);
       })
       .catch(() => setWebsiteConfigLoaded(true));
-  }, [apiBase, yandleHandle, activeNav, websiteConfigLoaded]);
+  }, [apiBase, yandleHandle]);
 
   // Load credits on overview tab
   useEffect(() => {
@@ -1626,7 +1633,7 @@ const Dashboard = () => {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-base font-display font-semibold flex items-center gap-2">
-                    <Calendar className="h-4 w-4 text-primary" />
+                    <CalendarIcon className="h-4 w-4 text-primary" />
                     Bookings
                   </h2>
                   <p className="text-xs text-muted-foreground mt-0.5">
@@ -1696,12 +1703,27 @@ const Dashboard = () => {
                     )}
                     <div className="flex items-center gap-2">
                       <Label className="text-sm font-medium">Date</Label>
-                      <Input
-                        type="date"
-                        value={gridDate}
-                        onChange={(e) => setGridDate(e.target.value)}
-                        className="w-40"
-                      />
+                      <Popover open={gridDatePickerOpen} onOpenChange={setGridDatePickerOpen}>
+                        <PopoverTrigger asChild>
+                          <Button variant="outline" className="w-40 justify-start text-left font-normal bg-card/50 hover:bg-card">
+                            <CalendarIcon className="mr-2 h-4 w-4" />
+                            {gridDate ? format(new Date(gridDate + "T12:00:00"), "MMM d, yyyy") : "Pick date"}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <Calendar
+                            mode="single"
+                            selected={gridDate ? new Date(gridDate + "T12:00:00") : undefined}
+                            onSelect={(d) => {
+                              if (d) {
+                                setGridDate(format(d, "yyyy-MM-dd"));
+                                setGridDatePickerOpen(false);
+                              }
+                            }}
+                            initialFocus
+                          />
+                        </PopoverContent>
+                      </Popover>
                     </div>
                   </div>
                   <Tabs value={gamingBookingsSubTab} onValueChange={(v) => setGamingBookingsSubTab(v as "dashboard" | "reservations" | "hardware")} className="w-full">
@@ -2282,7 +2304,7 @@ const Dashboard = () => {
                                 <Card key={dateKey} className="bg-card/50 border-border">
                                   <CardHeader className="pb-2">
                                     <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                                      <Calendar className="h-4 w-4 text-primary" />
+                                      <CalendarIcon className="h-4 w-4 text-primary" />
                                       {(() => {
                                         try {
                                           const [y, m, d] = dateKey.split("-").map(Number);
@@ -2320,7 +2342,27 @@ const Dashboard = () => {
                     <div className="grid grid-cols-2 gap-2">
                       <div className="space-y-1">
                         <Label>Date (IST)</Label>
-                        <Input type="date" value={walkInStartDate} onChange={(e) => setWalkInStartDate(e.target.value)} />
+                        <Popover open={walkInDatePickerOpen} onOpenChange={setWalkInDatePickerOpen}>
+                          <PopoverTrigger asChild>
+                            <Button variant="outline" className="w-full justify-start text-left font-normal">
+                              <CalendarIcon className="mr-2 h-4 w-4" />
+                              {walkInStartDate ? format(new Date(walkInStartDate + "T12:00:00"), "MMM d, yyyy") : "Pick date"}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <Calendar
+                              mode="single"
+                              selected={walkInStartDate ? new Date(walkInStartDate + "T12:00:00") : undefined}
+                              onSelect={(d) => {
+                                if (d) {
+                                  setWalkInStartDate(format(d, "yyyy-MM-dd"));
+                                  setWalkInDatePickerOpen(false);
+                                }
+                              }}
+                              initialFocus
+                            />
+                          </PopoverContent>
+                        </Popover>
                       </div>
                       <div className="space-y-1">
                         <Label>Time (IST)</Label>
@@ -3861,7 +3903,27 @@ const Dashboard = () => {
                           <img src={url} alt={`Gallery ${idx + 1}`} className="w-full h-full object-cover" />
                           <button
                             type="button"
-                            onClick={() => setWebsiteGalleryImages((prev) => prev.filter((_, i) => i !== idx))}
+                            onClick={async () => {
+                              const newGallery = websiteGalleryImages.filter((_, i) => i !== idx);
+                              setWebsiteGalleryImages(newGallery);
+                              const token = localStorage.getItem("yandle_id_token") || "";
+                              try {
+                                const r = await fetch(`${apiBase}/website/config`, {
+                                  method: "POST",
+                                  headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+                                  body: JSON.stringify({
+                                    handle: yandleHandle,
+                                    heroTagline: websiteHeroTagline,
+                                    aboutText: websiteAboutText,
+                                    galleryImages: newGallery,
+                                    colorTheme: websiteColorTheme,
+                                    contactEmail: websiteContactEmail,
+                                    socialLinks: websiteSocialLinks,
+                                  }),
+                                });
+                                if (r.ok) toast({ title: "Photo removed", description: "Saved." });
+                              } catch (_) {}
+                            }}
                             className="absolute top-1 right-1 bg-black/60 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                           >
                             <X className="h-3 w-3" />
@@ -3906,8 +3968,24 @@ const Dashboard = () => {
                               });
                               if (!uploadResp.ok) throw new Error("Upload failed");
 
-                              setWebsiteGalleryImages((prev) => [...prev, publicUrl]);
-                              toast({ title: "Photo uploaded" });
+                              const newGallery = [...websiteGalleryImages, publicUrl];
+                              setWebsiteGalleryImages(newGallery);
+                              // Persist so image appears on mobile and after refresh
+                              const saveRes = await fetch(`${apiBase}/website/config`, {
+                                method: "POST",
+                                headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+                                body: JSON.stringify({
+                                  handle: yandleHandle,
+                                  heroTagline: websiteHeroTagline,
+                                  aboutText: websiteAboutText,
+                                  galleryImages: newGallery,
+                                  colorTheme: websiteColorTheme,
+                                  contactEmail: websiteContactEmail,
+                                  socialLinks: websiteSocialLinks,
+                                }),
+                              });
+                              if (saveRes.ok) toast({ title: "Photo uploaded", description: "Saved to website." });
+                              else toast({ title: "Photo uploaded", description: "Save config failed — tap Save & publish to sync.", variant: "destructive" });
                             } catch (err) {
                               toast({ title: "Upload failed", description: (err as Error).message, variant: "destructive" });
                             } finally {

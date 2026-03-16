@@ -2,9 +2,13 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../api_config.dart';
 import '../services/auth_service.dart';
+
+/// Web app base URL for business website and shareable link.
+const String _webBaseUrl = 'https://yandle.io';
 
 class AdminProfilePage extends StatefulWidget {
   final String handle;
@@ -31,6 +35,7 @@ class _AdminProfilePageState extends State<AdminProfilePage> {
   String _selectedVoice = 'tiffany';
   String _persona = '';
   String _knowledgeBaseCustomText = '';
+  String? _phoneNumber;
   int? _credits;
   int? _totalUsed;
   bool _loading = true;
@@ -80,17 +85,40 @@ class _AdminProfilePageState extends State<AdminProfilePage> {
       final profileRes = results[0];
       final creditsRes = results[1];
 
+      String? phoneFromHandles;
       if (profileRes.statusCode == 200) {
         final data = jsonDecode(profileRes.body) as Map<String, dynamic>;
         final profile = data['profile'] as Map<String, dynamic>? ?? {};
+        final pn = profile['phoneNumber'] as String?;
+        phoneFromHandles = (pn != null && pn.toString().trim().isNotEmpty)
+            ? pn.toString().trim()
+            : null;
         if (mounted) {
           setState(() {
             _selectedVoice = profile['voiceId'] as String? ?? 'tiffany';
             _persona = profile['persona'] as String? ?? '';
             _knowledgeBaseCustomText =
                 profile['knowledgeBaseCustomText'] as String? ?? '';
+            _phoneNumber = phoneFromHandles;
           });
         }
+      }
+
+      // Fallback: if handles didn't return phone, load from public profile (e.g. purchased number)
+      if (mounted && phoneFromHandles == null) {
+        try {
+          final pubRes = await http.get(
+            Uri.parse('$apiBase/public/${Uri.encodeComponent(widget.handle)}'),
+          );
+          if (pubRes.statusCode == 200) {
+            final pubData = jsonDecode(pubRes.body) as Map<String, dynamic>;
+            final pubProfile = pubData['profile'] as Map<String, dynamic>? ?? {};
+            final pn = pubProfile['phoneNumber'] as String?;
+            if (pn != null && pn.toString().trim().isNotEmpty && mounted) {
+              setState(() => _phoneNumber = pn.toString().trim());
+            }
+          }
+        } catch (_) {}
       }
 
       if (creditsRes.statusCode == 200) {
@@ -150,6 +178,22 @@ class _AdminProfilePageState extends State<AdminProfilePage> {
       }
     } catch (_) {}
     if (mounted) setState(() => _savingPersona = false);
+  }
+
+  Future<void> _openUrl(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open link')),
+        );
+      }
+    }
   }
 
   Future<void> _saveKb() async {
@@ -312,6 +356,47 @@ class _AdminProfilePageState extends State<AdminProfilePage> {
                           ],
                         ),
                       ),
+
+                    // Business links: phone, website, shareable link
+                    _sectionLabel('Business links'),
+                    const SizedBox(height: 8),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0F172A),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFF1E293B)),
+                      ),
+                      child: Column(
+                        children: [
+                          if (_phoneNumber != null) ...[
+                            _AdminLinkTile(
+                              icon: Icons.phone_outlined,
+                              label: 'Phone number',
+                              value: _phoneNumber!,
+                              themeColor: widget.themeColor,
+                              onTap: () => _openUrl('tel:$_phoneNumber'),
+                            ),
+                            const Divider(height: 1, color: Color(0xFF1E293B)),
+                          ],
+                          _AdminLinkTile(
+                            icon: Icons.language_outlined,
+                            label: 'Website',
+                            value: '$_webBaseUrl/${widget.handle}',
+                            themeColor: widget.themeColor,
+                            onTap: () => _openUrl('$_webBaseUrl/${widget.handle}'),
+                          ),
+                          const Divider(height: 1, color: Color(0xFF1E293B)),
+                          _AdminLinkTile(
+                            icon: Icons.link_rounded,
+                            label: 'Shareable link',
+                            value: '$_webBaseUrl/shareable/${widget.handle}',
+                            themeColor: widget.themeColor,
+                            onTap: () => _openUrl('$_webBaseUrl/shareable/${widget.handle}'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
 
                     // Voice selector
                     _sectionLabel('Voice'),
@@ -561,4 +646,67 @@ class _AdminProfilePageState extends State<AdminProfilePage> {
           letterSpacing: 0.5,
         ),
       );
+}
+
+class _AdminLinkTile extends StatelessWidget {
+  const _AdminLinkTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.themeColor,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color themeColor;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              Icon(icon, color: themeColor, size: 20),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      value,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.arrow_forward_ios_rounded, color: Colors.white38, size: 14),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

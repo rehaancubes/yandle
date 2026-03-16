@@ -1,18 +1,11 @@
 import { motion } from "framer-motion";
-import { Video, Briefcase, GraduationCap, Code, Globe, Stethoscope, ShoppingBag, Scissors } from "lucide-react";
+import { Monitor, Scissors, Building2, Headset } from "lucide-react";
 
-const individualCases = [
-  { icon: Video, title: "Creators", desc: "Handle brand inquiries, sponsorships, and collabs through your AI." },
-  { icon: Briefcase, title: "Freelancers", desc: "Qualify leads, collect requirements, and book calls automatically." },
-  { icon: GraduationCap, title: "Coaches", desc: "Explain packages, pre-qualify clients, and book paid sessions." },
-  { icon: Code, title: "Developers", desc: "Share services, gather technical needs, and route serious leads." },
-];
-
-const businessCases = [
-  { icon: Stethoscope, title: "Clinics", desc: "AI receptionist handles appointment booking and patient intake." },
-  { icon: Scissors, title: "Salons", desc: "Schedule appointments, answer service questions, collect preferences." },
-  { icon: ShoppingBag, title: "E-commerce", desc: "Product recommendations, order support, and returns handling." },
-  { icon: Globe, title: "Agencies", desc: "Qualify prospects, explain services, and route to the right team." },
+const useCases = [
+  { icon: Monitor, title: "Gaming Cafe", desc: "Manage locations, machines, bookings, and availability with AI." },
+  { icon: Scissors, title: "Salon", desc: "Schedule appointments, answer service questions, manage branches." },
+  { icon: Building2, title: "General Business", desc: "Answer questions, capture leads, and manage callback requests with AI." },
+  { icon: Headset, title: "Customer Support", desc: "Categorize issues, create tickets, and track resolutions with AI." },
 ];
 
 const UseCasesSection = () => {
@@ -30,63 +23,28 @@ const UseCasesSection = () => {
             Use Cases
           </span>
           <h2 className="font-display text-4xl sm:text-5xl font-bold tracking-tight mb-4">
-            Built for everyone.
+            Built for your business type.
           </h2>
           <p className="text-muted-foreground text-lg max-w-xl mx-auto">
-            Whether you're a solo creator or a global brand, YANDLE makes you conversationally accessible.
+            YANDLE adapts to how you work — gaming cafes, salons, support, or general business.
           </p>
         </motion.div>
 
-        <div className="grid lg:grid-cols-2 gap-12 max-w-6xl mx-auto">
-          {/* Individuals */}
-          <motion.div
-            initial={{ opacity: 0, x: -30 }}
-            whileInView={{ opacity: 1, x: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.6 }}
-          >
-            <div className="flex items-center gap-3 mb-6">
-              <div className="h-8 w-1 rounded-full bg-primary" />
-              <h3 className="font-display text-2xl font-semibold">For Individuals</h3>
-            </div>
-            <div className="grid sm:grid-cols-2 gap-4">
-              {individualCases.map((item) => (
-                <div
-                  key={item.title}
-                  className="rounded-xl border border-border bg-card/30 p-5 hover:border-glow transition-all duration-300"
-                >
-                  <item.icon className="h-5 w-5 text-primary mb-3" />
-                  <h4 className="font-display font-semibold mb-1.5">{item.title}</h4>
-                  <p className="text-sm text-muted-foreground leading-relaxed">{item.desc}</p>
-                </div>
-              ))}
-            </div>
-          </motion.div>
-
-          {/* Businesses */}
-          <motion.div
-            initial={{ opacity: 0, x: 30 }}
-            whileInView={{ opacity: 1, x: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.6 }}
-          >
-            <div className="flex items-center gap-3 mb-6">
-              <div className="h-8 w-1 rounded-full bg-primary" />
-              <h3 className="font-display text-2xl font-semibold">For Businesses</h3>
-            </div>
-            <div className="grid sm:grid-cols-2 gap-4">
-              {businessCases.map((item) => (
-                <div
-                  key={item.title}
-                  className="rounded-xl border border-border bg-card/30 p-5 hover:border-glow transition-all duration-300"
-                >
-                  <item.icon className="h-5 w-5 text-primary mb-3" />
-                  <h4 className="font-display font-semibold mb-1.5">{item.title}</h4>
-                  <p className="text-sm text-muted-foreground leading-relaxed">{item.desc}</p>
-                </div>
-              ))}
-            </div>
-          </motion.div>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 max-w-5xl mx-auto">
+          {useCases.map((item, i) => (
+            <motion.div
+              key={item.title}
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.5, delay: i * 0.08 }}
+              className="rounded-xl border border-border bg-card/30 p-6 hover:border-glow transition-all duration-300"
+            >
+              <item.icon className="h-6 w-6 text-primary mb-4" />
+              <h4 className="font-display font-semibold mb-2">{item.title}</h4>
+              <p className="text-sm text-muted-foreground leading-relaxed">{item.desc}</p>
+            </motion.div>
+          ))}
         </div>
       </div>
     </section>

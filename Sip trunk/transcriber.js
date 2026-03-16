@@ -1,5 +1,7 @@
 const express = require("express");
+const fs = require("fs");
 const net = require("net");
+const path = require("path");
 const { getOrgByDid } = require("./db");
 const { startSonicStream } = require("./sonicClient");
 
@@ -195,6 +197,43 @@ function generateRingbackTone(rate, codec) {
 const RINGBACK_BUF = generateRingbackTone(PBX_RATE, PBX_CODEC);
 
 /* =====================================================
+   HELLO.MP3 / HELLO.RAW – play at call start so agent speaks first
+   Place hello.mp3 in this folder; optionally create hello.raw for SIP:
+   ffmpeg -i hello.mp3 -f s16le -ar 24000 -ac 1 hello.raw
+===================================================== */
+const HELLO_RAW_PATH = path.join(__dirname, "hello.raw");
+let HELLO_PCM_24K = null;
+function loadHelloBuffer() {
+  if (HELLO_PCM_24K) return HELLO_PCM_24K;
+  try {
+    if (fs.existsSync(HELLO_RAW_PATH)) {
+      HELLO_PCM_24K = fs.readFileSync(HELLO_RAW_PATH);
+      console.log(`✅ Loaded hello.raw (${HELLO_PCM_24K.length} bytes) for call greeting`);
+      return HELLO_PCM_24K;
+    }
+  } catch (e) {
+    console.warn("⚠ Could not load hello.raw:", e.message);
+  }
+  return null;
+}
+
+/** Play pre-loaded hello.raw (24kHz mono s16le) to the call; returns a Promise that resolves after playback duration. */
+function playHelloToOutput(helloPcm, enqueueFrame) {
+  if (!helloPcm || helloPcm.length === 0) return Promise.resolve();
+  const FRAME_SAMPLES = Math.round(PBX_RATE * 0.02);
+  const FRAME_BYTES = FRAME_SAMPLES * 2;
+  const chunkBytes = (PBX_CODEC === "slin") ? FRAME_BYTES : FRAME_SAMPLES;
+  let out = resample(helloPcm, SONIC_OUTPUT_RATE, PBX_RATE);
+  if (PBX_CODEC === "alaw" || PBX_CODEC === "ulaw") out = g711Encode(out, PBX_CODEC);
+  for (let i = 0; i < out.length; i += chunkBytes) {
+    const chunk = out.slice(i, i + chunkBytes);
+    if (chunk.length > 0) enqueueFrame(audioFrame(chunk));
+  }
+  const durationMs = (helloPcm.length / 2 / SONIC_OUTPUT_RATE) * 1000;
+  return new Promise((resolve) => setTimeout(resolve, Math.ceil(durationMs)));
+}
+
+/* =====================================================
    HTTP – CALL START
 ===================================================== */
 
@@ -215,7 +254,18 @@ const AUDIOSOCKET_ADDR = "54.226.99.50:5000";
 const OUTBOUND_CALLER_ID = "08035229493";
 
 app.post("/call-originate", async (req, res) => {
-  const { phoneNumber, campaignId, leadId, callType, businessName, businessType, location } = req.body;
+  const {
+    phoneNumber,
+    campaignId,
+    leadId,
+    callType,
+    businessName,
+    businessType,
+    location,
+    systemPrompt: bmsSystemPrompt,
+    voiceId: bmsVoiceId,
+    knowledgeBaseId: bmsKnowledgeBaseId,
+  } = req.body;
   if (!phoneNumber) {
     return res.status(400).json({ error: "phoneNumber is required" });
   }
@@ -223,7 +273,7 @@ app.post("/call-originate", async (req, res) => {
   const uniqueid = generateUUID();
   const cleanPhone = phoneNumber.replace(/[^0-9+]/g, "");
 
-  // Store in activeCalls with sales metadata BEFORE Asterisk connects
+  // Store in activeCalls with sales metadata BEFORE Asterisk connects (BMS outbound config optional)
   activeCalls.set(uniqueid, {
     did: "outbound",
     caller: cleanPhone,
@@ -236,6 +286,9 @@ app.post("/call-originate", async (req, res) => {
     businessName: businessName || null,
     businessType: businessType || null,
     location: location || null,
+    systemPrompt: bmsSystemPrompt != null ? String(bmsSystemPrompt) : undefined,
+    voiceId: bmsVoiceId != null ? String(bmsVoiceId) : undefined,
+    knowledgeBaseId: bmsKnowledgeBaseId != null ? String(bmsKnowledgeBaseId) : undefined,
   });
 
   console.log(`📤 ORIGINATE | UUID=${uniqueid} | Phone=${cleanPhone} | Campaign=${campaignId || "test"}`);
@@ -445,7 +498,12 @@ const tcpServer = net.createServer((socket) => {
       try {
         callInfo.sonicSession = startSonicStream(uuid, callInfo, {
 
-          onReady: () => {
+          onReady: async () => {
+            const helloPcm = loadHelloBuffer();
+            if (helloPcm) {
+              console.log(`🔊 Playing hello greeting | SESSION=${sessionIndex}`);
+              await playHelloToOutput(helloPcm, enqueueFrame);
+            }
             stopRingback();
             console.log(`✅ Agent ready, ringback stopped | SESSION=${sessionIndex}`);
           },

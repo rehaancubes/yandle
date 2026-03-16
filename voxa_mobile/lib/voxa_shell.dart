@@ -11,7 +11,6 @@ import 'pages/admin_customers_page.dart';
 import 'pages/admin_website_page.dart';
 import 'pages/admin_profile_page.dart';
 import 'pages/bookings_page.dart';
-import 'pages/calls_page.dart';
 import 'pages/discover_page.dart';
 import 'pages/profile_page.dart';
 
@@ -66,9 +65,10 @@ class _YandleShellState extends State<YandleShell> {
       );
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
-        final config = data['config'] as Map<String, dynamic>? ?? {};
+        // API returns config at root (not under 'config') so support both shapes
+        final config = data['config'] as Map<String, dynamic>? ?? data;
         final ct =
-            (config['colorTheme'] as String?)?.toLowerCase() ?? 'indigo';
+            (config['colorTheme'] as String?)?.toString().trim().toLowerCase() ?? 'indigo';
         if (_themeColorMap.containsKey(ct) && mounted) {
           setState(() => _adminThemeColor = _themeColorMap[ct]!);
         }
@@ -78,7 +78,6 @@ class _YandleShellState extends State<YandleShell> {
 
   List<Widget> get _userTabs => const [
         DiscoverPage(),
-        CallsPage(),
         BookingsPage(),
       ];
 
@@ -140,7 +139,7 @@ class _YandleShellState extends State<YandleShell> {
           ),
         ),
         child: NavigationBar(
-          selectedIndex: _index.clamp(0, (_isAdminMode ? 4 : 3)),
+          selectedIndex: _index.clamp(0, (_isAdminMode ? 4 : 2)),
           backgroundColor: const Color(0xFF020617),
           surfaceTintColor: Colors.transparent,
           indicatorColor: const Color(0xFF1D2438),
@@ -179,11 +178,6 @@ class _YandleShellState extends State<YandleShell> {
                     icon: Icon(Icons.explore_outlined),
                     selectedIcon: Icon(Icons.explore_rounded),
                     label: 'Discover',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.mic_none_rounded),
-                    selectedIcon: Icon(Icons.mic_rounded),
-                    label: 'Calls',
                   ),
                   NavigationDestination(
                     icon: Icon(Icons.event_note_outlined),

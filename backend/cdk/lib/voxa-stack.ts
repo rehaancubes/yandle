@@ -280,6 +280,13 @@ export class VoxaStack extends cdk.Stack {
       partitionKey: { name: "callUniqueId", type: ddb.AttributeType.STRING }
     });
 
+    // BMS outbound voice config (handle, system prompt, voice, KB for salesbot)
+    const bmsOutboundConfigTable = new ddb.Table(this, "BmsOutboundConfigTable", {
+      partitionKey: { name: "configKey", type: ddb.AttributeType.STRING },
+      billingMode: ddb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY
+    });
+
     const kbContentBucket = new s3.Bucket(this, "VoxaKbContentBucket", {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true
@@ -573,6 +580,7 @@ export class VoxaStack extends cdk.Stack {
       RECORDINGS_BUCKET: recordingsBucket.bucketName,
       SALES_CAMPAIGNS_TABLE: salesCampaignsTable.tableName,
       SALES_LEADS_TABLE: salesLeadsTable.tableName,
+      BMS_OUTBOUND_CONFIG_TABLE: bmsOutboundConfigTable.tableName,
       SONIC_SERVICE_URL: sonicServiceUrl as unknown as string,
       SONIC_MODEL_ID: "amazon.nova-2-sonic-v1:0",
       TEXT_MODEL_ID: "amazon.nova-lite-v1:0",
@@ -1591,17 +1599,19 @@ export class VoxaStack extends cdk.Stack {
     });
     salesCampaignsTable.grantReadWriteData(salesbotCampaignsFn);
     salesLeadsTable.grantReadData(salesbotCampaignsFn);
+    bmsOutboundConfigTable.grantReadWriteData(salesbotCampaignsFn);
 
     const salesbotCallFn = new lambda.Function(this, "SalesbotCallFunction", {
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: "lambda/salesbot-call.handler",
       code: lambdaCode,
-      environment: { ...commonEnv, SIP_TRUNK_URL: process.env.SIP_TRUNK_URL || "http://localhost:3000" },
+      environment: { ...commonEnv, SIP_TRUNK_URL: process.env.SIP_TRUNK_URL || "http://54.226.99.50:3000" },
       layers: layer,
       timeout: cdk.Duration.seconds(30)
     });
     salesCampaignsTable.grantReadWriteData(salesbotCallFn);
     salesLeadsTable.grantReadWriteData(salesbotCallFn);
+    bmsOutboundConfigTable.grantReadData(salesbotCallFn);
 
     const salesbotWebhookFn = new lambda.Function(this, "SalesbotWebhookFunction", {
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -1655,6 +1665,12 @@ export class VoxaStack extends cdk.Stack {
       methods: [apigwv2.HttpMethod.POST],
       integration: new integrations.HttpLambdaIntegration("SalesbotWebhookIntegration", salesbotWebhookFn)
       // No authorizer — internal webhook from Sonic service, authenticated via X-Salesbot-Secret header
+    });
+    httpApi.addRoutes({
+      path: "/bms/salesbot/outbound-config",
+      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PATCH],
+      integration: new integrations.HttpLambdaIntegration("SalesbotOutboundConfigIntegration", salesbotCampaignsFn),
+      authorizer: jwtAuthorizer
     });
 
     // Website config endpoints

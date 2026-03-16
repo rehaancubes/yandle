@@ -25,6 +25,63 @@ exports.handler = async (event) => {
     const method = event.requestContext?.http?.method || "";
     const CAMPAIGNS_TABLE = process.env.SALES_CAMPAIGNS_TABLE;
     const LEADS_TABLE = process.env.SALES_LEADS_TABLE;
+    const OUTBOUND_CONFIG_TABLE = process.env.BMS_OUTBOUND_CONFIG_TABLE;
+    const OUTBOUND_CONFIG_KEY = "outbound";
+
+    // GET /bms/salesbot/outbound-config — get outbound voice config (handle, system prompt, voice, KB)
+    if (method === "GET" && path.endsWith("/outbound-config")) {
+      if (!OUTBOUND_CONFIG_TABLE) {
+        return { statusCode: 500, headers, body: JSON.stringify({ error: "Config not configured" }) };
+      }
+      const result = await ddb.get({
+        TableName: OUTBOUND_CONFIG_TABLE,
+        Key: { configKey: OUTBOUND_CONFIG_KEY },
+      }).promise();
+      const item = result.Item || {};
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          handle: item.handle || "voxa-salesbot",
+          systemPrompt: item.systemPrompt || "",
+          voiceId: item.voiceId || "tiffany",
+          knowledgeBaseId: item.knowledgeBaseId || "",
+        }),
+      };
+    }
+
+    // PATCH /bms/salesbot/outbound-config — update outbound voice config (upsert)
+    if (method === "PATCH" && path.endsWith("/outbound-config")) {
+      if (!OUTBOUND_CONFIG_TABLE) {
+        return { statusCode: 500, headers, body: JSON.stringify({ error: "Config not configured" }) };
+      }
+      const body = JSON.parse(event.body || "{}");
+      const now = new Date().toISOString();
+      const existing = await ddb.get({
+        TableName: OUTBOUND_CONFIG_TABLE,
+        Key: { configKey: OUTBOUND_CONFIG_KEY },
+      }).promise();
+      const current = existing.Item || {};
+      const item = {
+        configKey: OUTBOUND_CONFIG_KEY,
+        handle: body.handle != null ? String(body.handle).trim() : (current.handle || "voxa-salesbot"),
+        systemPrompt: body.systemPrompt != null ? String(body.systemPrompt) : (current.systemPrompt || ""),
+        voiceId: body.voiceId != null ? String(body.voiceId).trim() : (current.voiceId || "tiffany"),
+        knowledgeBaseId: body.knowledgeBaseId != null ? String(body.knowledgeBaseId).trim() : (current.knowledgeBaseId || ""),
+        updatedAt: now,
+      };
+      await ddb.put({ TableName: OUTBOUND_CONFIG_TABLE, Item: item }).promise();
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          handle: item.handle,
+          systemPrompt: item.systemPrompt,
+          voiceId: item.voiceId,
+          knowledgeBaseId: item.knowledgeBaseId,
+        }),
+      };
+    }
 
     // POST /bms/salesbot/campaigns — create campaign
     if (method === "POST" && (path.endsWith("/campaigns") || path.endsWith("/campaigns/"))) {

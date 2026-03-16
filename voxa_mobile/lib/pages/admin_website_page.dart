@@ -66,7 +66,10 @@ class _AdminWebsitePageState extends State<AdminWebsitePage> {
       );
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
-        final config = data['config'] as Map<String, dynamic>? ?? {};
+        // API returns config at root (no "config" wrapper)
+        final config = data.containsKey('galleryImages') || data.containsKey('heroTagline')
+            ? data
+            : (data['config'] as Map<String, dynamic>? ?? {});
         if (mounted) {
           _heroController.text = config['heroTagline'] as String? ?? '';
           _aboutController.text = config['aboutText'] as String? ?? '';
@@ -162,6 +165,7 @@ class _AdminWebsitePageState extends State<AdminWebsitePage> {
 
       if (mounted) {
         setState(() => _galleryImages = [..._galleryImages, publicUrl]);
+        await _save(); // Persist so image appears on web and after refresh
       }
     } catch (e) {
       if (mounted) {
@@ -363,11 +367,12 @@ class _AdminWebsitePageState extends State<AdminWebsitePage> {
                               top: 4,
                               right: 4,
                               child: GestureDetector(
-                                onTap: () {
+                                onTap: () async {
                                   setState(() {
                                     _galleryImages = List.from(_galleryImages)
                                       ..removeAt(idx);
                                   });
+                                  await _save(); // Persist removal so it reflects on web and after refresh
                                 },
                                 child: Container(
                                   padding: const EdgeInsets.all(4),
