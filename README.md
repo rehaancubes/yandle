@@ -1,6 +1,6 @@
-# Voxa — AI Voice Agent for Every Small Business
+# Yandle — AI Voice Agent for Every Small Business
 
-> **"I built Voxa because I was drowning in phone calls at my gaming cafe."**
+> **"I built Yandle because I was drowning in phone calls at my gaming cafe."**
 
 **License:** [MIT](LICENSE) — use, modify, and distribute with attribution.
 
@@ -18,17 +18,17 @@ Then people started asking: *"Do you have a website?"* I'd point them to a stati
 
 I thought — what if there was an AI that could just... pick up the phone for me? Know my machines, my availability, my prices. Book customers in. Answer questions. 24/7.
 
-So I built **Voxa**.
+So I built **Yandle**.
 
 But here's what happened next — a salon owner friend saw it and said, *"I need this for appointments."* Then a clinic asked, *"Can it handle doctor schedules?"* A retail shop wanted it for product inquiries. The problem wasn't unique to gaming cafes. **Every small business owner is overwhelmed by calls they can't answer and bookings they can't track.**
 
-Voxa is now a platform that gives any small business an AI voice agent powered by **Amazon Nova Sonic** — one that actually understands the business, checks real-time availability, books appointments, and answers customer questions. No more missed calls. No more double bookings. No more sticky notes.
+Yandle is now a platform that gives any small business an AI voice agent powered by **Amazon Nova** — three models working together: **Nova Sonic** for voice, **Nova Lite** for text chat, and **Nova Multimodal Embeddings** for the knowledge base. The agent understands the business, checks real-time availability, books appointments, and answers customer questions. No more missed calls. No more double bookings. No more sticky notes.
 
 ---
 
-## What Voxa Does
+## What Yandle Does
 
-**Voxa gives every small business an AI receptionist that picks up the phone, answers questions, and books appointments — powered by Amazon Nova.**
+**Yandle gives every small business an AI receptionist that picks up the phone, answers questions, and books appointments — powered by Amazon Nova.**
 
 A business owner signs up, goes through a guided onboarding (salon? clinic? gaming cafe? retail shop?), feeds in their services/branches/doctors/machines, and instantly gets:
 
@@ -42,18 +42,26 @@ A business owner signs up, goes through a guided onboarding (salon? clinic? gami
 
 ## Amazon Nova Integration
 
-### Nova Sonic — Real-Time Voice Agent
-The core of Voxa is **Amazon Nova Sonic** (`amazon.nova-2-sonic-v1:0`), a speech-to-speech model running on **ECS Fargate**. It powers bidirectional, real-time voice conversations between customers and the AI agent.
+Yandle uses **three Amazon Nova models** end to end:
 
-- Customers call the business phone number → SIP trunk routes to Voxa → Nova Sonic picks up
+| Model | Role |
+|-------|------|
+| **Nova Sonic** | Real-time speech-to-speech for voice calls and web/mobile voice |
+| **Nova Lite** | Fast text chat and reasoning (Converse API, tool use) |
+| **Nova Multimodal Embeddings** | Vector embeddings for the per-business Knowledge Base (RAG) |
+
+### Nova Sonic — Real-Time Voice Agent
+The voice layer is **Amazon Nova Sonic** (`amazon.nova-2-sonic-v1:0`), a speech-to-speech model running on **ECS Fargate**. It powers bidirectional, real-time voice conversations between customers and the AI agent.
+
+- Customers call the business phone number → SIP trunk routes to Yandle → Nova Sonic picks up
 - Customers visit the shareable link → browser mic connects via WebSocket → Nova Sonic responds
 - The agent speaks naturally, understands context, and uses tools to take real actions
 
 ### Nova Lite — Text Chat Agent
 For the text chat interface (web + mobile), **Amazon Nova Lite** handles fast, cost-effective conversations via the Bedrock Converse API with full tool use.
 
-### Bedrock Knowledge Bases — Per-Business RAG
-Each business gets its own **Amazon Bedrock Knowledge Base** with an S3-backed vector store. Business data (services, pricing, hours, policies, FAQs) is automatically synced into the KB. The voice agent queries it in real-time to answer customer questions accurately.
+### Nova Multimodal Embeddings — Knowledge Base
+Each business has a **Bedrock Knowledge Base** backed by **Amazon Nova Multimodal Embeddings** (`amazon.nova-2-multimodal-embeddings-v1:0`). Business data (services, pricing, hours, policies, FAQs) and uploaded files are embedded and stored in an S3-backed vector store. The voice and chat agents query it in real time to answer customer questions accurately and cite sources.
 
 - Auto-created per business during onboarding
 - Synced whenever business data changes (services, branches, doctors, etc.)
@@ -119,7 +127,7 @@ The agent collects the right info based on business type — for a **gaming cafe
 
 ---
 
-## Features — Everything Voxa Does
+## Features — Everything Yandle Does
 
 ### For Business Owners (Dashboard)
 
@@ -163,7 +171,7 @@ The agent collects the right info based on business type — for a **gaming cafe
 |-------|-----------|
 | **Voice AI** | Amazon Nova Sonic (speech-to-speech, ECS Fargate) |
 | **Text AI** | Amazon Nova Lite (Bedrock Converse API) |
-| **Knowledge** | Amazon Bedrock Knowledge Bases + S3 Vectors |
+| **Knowledge** | Amazon Bedrock Knowledge Bases + **Nova Multimodal Embeddings** + S3 vectors |
 | **OCR** | Amazon Textract (image → KB ingestion) |
 | **Infrastructure** | AWS CDK v2 (TypeScript), 1,380 lines of IaC |
 | **Compute** | 39 Lambda functions (Node.js 20.x) + ECS Fargate |
@@ -175,14 +183,14 @@ The agent collects the right info based on business type — for a **gaming cafe
 | **Web Frontend** | React 18 + Vite + TypeScript + Tailwind + Shadcn/UI |
 | **Mobile** | Flutter (Dart) + Material 3 |
 | **Real-time** | Socket.IO (WebSocket) |
-| **Telephony** | SIP Trunk integration (Asterisk → Voxa → Nova Sonic) |
+| **Telephony** | SIP Trunk integration (Asterisk → Yandle → Nova Sonic) |
 
 ---
 
 ## Repository Structure
 
 ```
-voxa/
+yandle/
 ├── backend/
 │   ├── cdk/
 │   │   ├── lib/voxa-stack.ts          # Full infrastructure (1,380 lines)
@@ -239,10 +247,10 @@ voxa/
 ## How It Works — End to End
 
 ### 1. Business Onboarding
-Owner signs up → picks business type → adds services, branches, doctors, or machines → Voxa auto-creates a Bedrock Knowledge Base, syncs all business data, and the AI agent is ready.
+Owner signs up → picks business type → adds services, branches, doctors, or machines → Yandle auto-creates a Bedrock Knowledge Base (using Nova Multimodal Embeddings), syncs all business data, and the AI agent is ready.
 
 ### 2. Customer Calls the Business
-Phone rings → SIP trunk intercepts → routes to Voxa's Sonic service → Nova Sonic picks up → *"Hi, welcome to M80 Esports! How can I help you today?"*
+Phone rings → SIP trunk intercepts → routes to Yandle's Sonic service → Nova Sonic picks up → *"Hi, welcome to M80 Esports! How can I help you today?"*
 
 Customer: *"Do you have a PC available at 5pm today?"*
 
@@ -273,7 +281,7 @@ Dashboard shows today's bookings, recent conversations with full transcripts and
 
 ## How to Use & Build
 
-This section explains how to run and build each part of Voxa locally or for production.
+This section explains how to run and build each part of Yandle locally or for production.
 
 ### Prerequisites
 
@@ -320,7 +328,7 @@ The real-time voice agent runs as a container (e.g. on ECS Fargate). Build and r
 ```bash
 cd backend/sonic-service
 npm install
-docker build -t voxa-sonic-service .
+docker build -t yandle-sonic-service .
 ```
 
 **Run locally:**
@@ -423,7 +431,7 @@ flutter run
 
 ### 5. Gaming Cafe Website (optional)
 
-The `gamingcafewebsite/` folder is a separate Vite + React site (e.g. for a single gaming cafe). It is independent of the main Voxa web app.
+The `gamingcafewebsite/` folder is a separate Vite + React site (e.g. for a single gaming cafe). It is independent of the main Yandle web app.
 
 **Install and run:**
 
@@ -443,7 +451,7 @@ npm run build
 
 ### 6. SIP Trunk (optional)
 
-The `Sip trunk/` folder contains the bridge (e.g. Asterisk/transcriber) that routes phone calls to the Sonic service. Use it if you connect a real SIP trunk to Voxa. Setup is environment-specific (Asterisk config, Socket.IO URL to Sonic, etc.); see that folder for scripts and config.
+The `Sip trunk/` folder contains the bridge (e.g. Asterisk/transcriber) that routes phone calls to the Sonic service. Use it if you connect a real SIP trunk to Yandle. Setup is environment-specific (Asterisk config, Socket.IO URL to Sonic, etc.); see that folder for scripts and config.
 
 ---
 
@@ -461,7 +469,7 @@ The `Sip trunk/` folder contains the bridge (e.g. Asterisk/transcriber) that rou
 
 ## Demo
 
-**Live Demo**: [voxa.website](https://voxa.website)
+**Live Demo**: [yandle.website](https://yandle.website)
 
 **Try it**: Visit any business's shareable link, click the mic, and talk to the AI. Ask about availability, services, or book an appointment — the AI handles it all in real-time using Amazon Nova Sonic.
 
@@ -481,7 +489,7 @@ The `Sip trunk/` folder contains the bridge (e.g. Asterisk/transcriber) that rou
 
 Every small business deserves an AI receptionist. The salon around the corner misses 40% of calls because the stylist is with a client. The clinic receptionist is overwhelmed during rush hour. The gaming cafe owner is too busy setting up tournaments to answer the phone.
 
-Voxa turns every missed call into a booked customer. It's not about replacing humans — it's about making sure no customer ever hears a busy tone again.
+Yandle turns every missed call into a booked customer. It's not about replacing humans — it's about making sure no customer ever hears a busy tone again.
 
 ---
 
