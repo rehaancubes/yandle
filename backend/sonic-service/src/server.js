@@ -10,6 +10,7 @@ import {
   QueryCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
+import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import {
   NovaSonicBidirectionalStreamClient,
   StreamSession,
@@ -45,6 +46,10 @@ const CONVERSATIONS_TABLE = process.env.CONVERSATIONS_TABLE;
 const CREDITS_TABLE = process.env.CREDITS_TABLE;
 const REQUESTS_TABLE = process.env.REQUESTS_TABLE;
 const TICKETS_TABLE = process.env.TICKETS_TABLE;
+
+// Salesbot config
+const SALESBOT_WEBHOOK_URL = process.env.SALESBOT_WEBHOOK_URL || "";
+const SALESBOT_WEBHOOK_SECRET = process.env.SALESBOT_WEBHOOK_SECRET || "voxa-salesbot-internal-2024";
 
 // DynamoDB client (used for booking tools)
 const ddbDoc =
@@ -902,6 +907,105 @@ function setupSessionHandlers(session, socket) {
   });
 }
 
+/* =====================================================
+   SALESBOT — Post-call classification via Nova Lite
+===================================================== */
+
+async function classifySalesCall(transcript) {
+  if (!transcript || transcript.trim().length < 10) {
+    return { summary: "Call was too short to classify.", classification: "cold" };
+  }
+
+  try {
+    const bedrock = new BedrockRuntimeClient({ region });
+    const response = await bedrock.send(new ConverseCommand({
+      modelId: "amazon.nova-lite-v1:0",
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              text: `You are analyzing a sales call transcript where our AI agent called a business to pitch Voxa (an AI voice agent platform). Based on the conversation, provide:
+
+1. A 2-3 sentence summary of how the call went.
+2. A classification of the lead:
+   - "hot": Very interested, asked questions, wants a demo or gave contact info
+   - "warm": Somewhat interested, didn't reject outright, may follow up
+   - "cold": Not interested right now but was polite about it
+   - "not_interested": Firmly declined, asked not to be called, or was hostile
+
+Return your response as valid JSON only, no markdown:
+{"summary": "...", "classification": "hot|warm|cold|not_interested"}
+
+Transcript:
+${transcript.slice(0, 4000)}`
+            }
+          ]
+        }
+      ],
+      inferenceConfig: { maxTokens: 300, temperature: 0.1 },
+    }));
+
+    const text = response.output?.message?.content?.[0]?.text || "";
+    // Try to parse JSON from the response
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        summary: parsed.summary || "No summary available",
+        classification: ["hot", "warm", "cold", "not_interested"].includes(parsed.classification)
+          ? parsed.classification
+          : "cold",
+      };
+    }
+    return { summary: text.slice(0, 300), classification: "cold" };
+  } catch (err) {
+    console.error("[classifySalesCall] Error:", err.message);
+    return { summary: "Classification failed: " + err.message, classification: "cold" };
+  }
+}
+
+async function postSalesbotWebhook(data) {
+  if (!SALESBOT_WEBHOOK_URL) {
+    console.warn("[postSalesbotWebhook] No SALESBOT_WEBHOOK_URL configured, skipping");
+    return;
+  }
+
+  const body = JSON.stringify(data);
+  const url = new URL(SALESBOT_WEBHOOK_URL);
+  const proto = url.protocol === "https:" ? await import("https") : await import("http");
+
+  return new Promise((resolve, reject) => {
+    const req = proto.request(
+      {
+        hostname: url.hostname,
+        port: url.port || (url.protocol === "https:" ? 443 : 80),
+        path: url.pathname,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+          "X-Salesbot-Secret": SALESBOT_WEBHOOK_SECRET,
+        },
+      },
+      (res) => {
+        let responseData = "";
+        res.on("data", (chunk) => (responseData += chunk));
+        res.on("end", () => {
+          console.log(`[postSalesbotWebhook] Response: ${res.statusCode}`);
+          resolve(responseData);
+        });
+      }
+    );
+    req.on("error", (err) => {
+      console.error("[postSalesbotWebhook] Error:", err.message);
+      reject(err);
+    });
+    req.write(body);
+    req.end();
+  });
+}
+
 async function createNewSession(socket, config = {}) {
   const sessionId = socket.id;
   const reg = config.region || region;
@@ -1218,6 +1322,33 @@ io.on("connection", (socket) => {
           }
         }
         socketRecorders.delete(socket.id);
+
+        // Salesbot: if this was a sales call, classify and send webhook
+        if (config?.callType === "sales") {
+          const durationSeconds = recorder.getDurationSeconds();
+          const transcript = recorder.getTranscriptText?.() || "";
+          console.log(`[stopAudio] Sales call ended | Campaign=${config.campaignId} | Lead=${config.leadId} | Duration=${durationSeconds}s`);
+
+          // Run classification async (don't block session cleanup)
+          (async () => {
+            try {
+              const { summary, classification } = await classifySalesCall(transcript);
+              console.log(`[salesbot] Classification: ${classification} | Summary: ${summary.slice(0, 100)}`);
+              await postSalesbotWebhook({
+                campaignId: config.campaignId,
+                leadId: config.leadId,
+                summary,
+                classification,
+                transcript: transcript.slice(0, 5000),
+                durationSeconds,
+                callUniqueId: config.callUniqueId || null,
+              });
+            } catch (err) {
+              console.error("[salesbot] Post-call processing error:", err.message);
+            }
+          })();
+        }
+
         recorder.finalize(CONVERSATIONS_TABLE, ddbDoc).catch((e) =>
           console.error("[stopAudio] recording finalize error:", e.message)
         );

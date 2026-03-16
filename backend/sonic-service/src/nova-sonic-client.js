@@ -464,95 +464,101 @@ export class NovaSonicBidirectionalStreamClient {
     const session = this.sessions.get(sessionId);
     if (!session) return;
 
-    const tools = [
-      {
-        toolSpec: {
-          name: "createBooking",
-          description:
-            "Create and persist a confirmed booking for a caller, including center, machine type, date/time, duration, name, and phone number.",
-          inputSchema: {
-            json: JSON.stringify(CREATE_BOOKING_SCHEMA),
+    // Sales calls have no tools — they are purely conversational
+    const isSalesCall = session.context?.callType === "sales";
+    const tools = [];
+
+    if (!isSalesCall) {
+      tools.push(
+        {
+          toolSpec: {
+            name: "createBooking",
+            description:
+              "Create and persist a confirmed booking for a caller, including center, machine type, date/time, duration, name, and phone number.",
+            inputSchema: {
+              json: JSON.stringify(CREATE_BOOKING_SCHEMA),
+            },
           },
         },
-      },
-      {
-        toolSpec: {
-          name: "getBookingsForTimeRange",
-          description:
-            "Check existing bookings for a center and machine type within a specific time range to determine availability and potential conflicts.",
-          inputSchema: {
-            json: JSON.stringify(GET_BOOKINGS_FOR_TIME_RANGE_SCHEMA),
+        {
+          toolSpec: {
+            name: "getBookingsForTimeRange",
+            description:
+              "Check existing bookings for a center and machine type within a specific time range to determine availability and potential conflicts.",
+            inputSchema: {
+              json: JSON.stringify(GET_BOOKINGS_FOR_TIME_RANGE_SCHEMA),
+            },
           },
         },
-      },
-    ];
+      );
 
-    // Add catalog lookup tool for retail businesses
-    tools.push({
-      toolSpec: {
-        name: "lookupCatalogItems",
-        description: "Look up products in the business catalog. Use when customer asks about available products, stock, prices, or specific items.",
-        inputSchema: { json: JSON.stringify(LOOKUP_CATALOG_ITEMS_SCHEMA) }
-      }
-    });
-
-    // Add clinic token tool for clinic businesses
-    tools.push({
-      toolSpec: {
-        name: "createClinicToken",
-        description: "Issue a queue token to a patient for a clinic visit. Use when a patient calls to get a token/queue number for a doctor.",
-        inputSchema: { json: JSON.stringify(CREATE_CLINIC_TOKEN_SCHEMA) }
-      }
-    });
-
-    // Add request tool for general businesses
-    tools.push({
-      toolSpec: {
-        name: "createRequest",
-        description: "Create a callback/contact request when a caller wants to leave a message, request a callback, or report an issue. Use for general businesses.",
-        inputSchema: { json: JSON.stringify(CREATE_REQUEST_SCHEMA) }
-      }
-    });
-
-    // Add support ticket tools for customer_support businesses
-    tools.push({
-      toolSpec: {
-        name: "createSupportTicket",
-        description: "Create a support ticket for a customer issue. Collect the issue description and categorize it. Use for customer support businesses.",
-        inputSchema: { json: JSON.stringify(CREATE_SUPPORT_TICKET_SCHEMA) }
-      }
-    });
-    tools.push({
-      toolSpec: {
-        name: "checkTicketStatus",
-        description: "Look up existing support tickets by customer phone number. Use when a customer asks about the status of their previously raised ticket.",
-        inputSchema: { json: JSON.stringify(CHECK_TICKET_STATUS_SCHEMA) }
-      }
-    });
-
-    // Add onboarding field update tool when session is in onboarding mode
-    if (session.context?.mode === "onboarding") {
+      // Add catalog lookup tool for retail businesses
       tools.push({
         toolSpec: {
-          name: "updateOnboardingField",
-          description: "Update a form field in the onboarding wizard. Use this to fill in business details as the user speaks them. Call once per field.",
-          inputSchema: { json: JSON.stringify(UPDATE_ONBOARDING_FIELD_SCHEMA) }
+          name: "lookupCatalogItems",
+          description: "Look up products in the business catalog. Use when customer asks about available products, stock, prices, or specific items.",
+          inputSchema: { json: JSON.stringify(LOOKUP_CATALOG_ITEMS_SCHEMA) }
         }
       });
-    }
 
-    // Add Bedrock Knowledge Base tool when a knowledge base is configured (per session or env)
-    if (session.context?.knowledgeBaseId) {
+      // Add clinic token tool for clinic businesses
       tools.push({
         toolSpec: {
-          name: "queryKnowledgeBase",
-          description:
-            "Look up answers from the business knowledge base. You MUST call this tool whenever the user asks about this business: prices, hours, location, services, policies, FAQs, or any company-specific information. Pass the user's question as the 'query' parameter. Do not answer such questions without calling this tool first.",
-          inputSchema: {
-            json: JSON.stringify(KNOWLEDGE_BASE_TOOL_SCHEMA),
-          },
-        },
+          name: "createClinicToken",
+          description: "Issue a queue token to a patient for a clinic visit. Use when a patient calls to get a token/queue number for a doctor.",
+          inputSchema: { json: JSON.stringify(CREATE_CLINIC_TOKEN_SCHEMA) }
+        }
       });
+
+      // Add request tool for general businesses
+      tools.push({
+        toolSpec: {
+          name: "createRequest",
+          description: "Create a callback/contact request when a caller wants to leave a message, request a callback, or report an issue. Use for general businesses.",
+          inputSchema: { json: JSON.stringify(CREATE_REQUEST_SCHEMA) }
+        }
+      });
+
+      // Add support ticket tools for customer_support businesses
+      tools.push({
+        toolSpec: {
+          name: "createSupportTicket",
+          description: "Create a support ticket for a customer issue. Collect the issue description and categorize it. Use for customer support businesses.",
+          inputSchema: { json: JSON.stringify(CREATE_SUPPORT_TICKET_SCHEMA) }
+        }
+      });
+      tools.push({
+        toolSpec: {
+          name: "checkTicketStatus",
+          description: "Look up existing support tickets by customer phone number. Use when a customer asks about the status of their previously raised ticket.",
+          inputSchema: { json: JSON.stringify(CHECK_TICKET_STATUS_SCHEMA) }
+        }
+      });
+
+      // Add onboarding field update tool when session is in onboarding mode
+      if (session.context?.mode === "onboarding") {
+        tools.push({
+          toolSpec: {
+            name: "updateOnboardingField",
+            description: "Update a form field in the onboarding wizard. Use this to fill in business details as the user speaks them. Call once per field.",
+            inputSchema: { json: JSON.stringify(UPDATE_ONBOARDING_FIELD_SCHEMA) }
+          }
+        });
+      }
+
+      // Add Bedrock Knowledge Base tool when a knowledge base is configured (per session or env)
+      if (session.context?.knowledgeBaseId) {
+        tools.push({
+          toolSpec: {
+            name: "queryKnowledgeBase",
+            description:
+              "Look up answers from the business knowledge base. You MUST call this tool whenever the user asks about this business: prices, hours, location, services, policies, FAQs, or any company-specific information. Pass the user's question as the 'query' parameter. Do not answer such questions without calling this tool first.",
+            inputSchema: {
+              json: JSON.stringify(KNOWLEDGE_BASE_TOOL_SCHEMA),
+            },
+          },
+        });
+      }
     }
 
     const event = {
@@ -570,9 +576,7 @@ export class NovaSonicBidirectionalStreamClient {
             voiceId: voiceId || "tiffany",
           },
           toolUseOutputConfiguration: { mediaType: "application/json" },
-          toolConfiguration: {
-            tools,
-          },
+          ...(tools.length > 0 ? { toolConfiguration: { tools } } : {}),
         },
       },
     };
