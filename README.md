@@ -30,7 +30,7 @@ Yandle is now a platform that gives any small business an AI voice agent powered
 
 **Yandle gives every small business an AI receptionist that picks up the phone, answers questions, and books appointments — powered by Amazon Nova.**
 
-A business owner signs up, goes through a guided onboarding (salon? clinic? gaming cafe? retail shop?), feeds in their services/branches/doctors/machines, and instantly gets:
+A business owner signs up, goes through a guided onboarding (gaming cafe, salon, general business, or customer support), feeds in their services/branches/machines or support categories, and instantly gets:
 
 1. **An AI Voice Agent** (Amazon Nova Sonic) that handles phone calls and web calls
 2. **A Shareable Booking Page** customers can visit to talk to the AI or book directly
@@ -68,15 +68,42 @@ Each business has a **Bedrock Knowledge Base** backed by **Amazon Nova Multimoda
 - Supports file uploads (PDFs, docs) and image ingestion (via **Amazon Textract** OCR)
 
 ### Agentic Tool Use
-The Nova agents aren't just chatbots — they're **agentic**. During a conversation, they autonomously invoke tools to:
+The Nova agents (voice and text) aren’t just chatbots — they’re **agentic**. During a conversation they autonomously call tools to look up data and take actions. The main tools are:
 
-| Tool | What It Does |
-|------|-------------|
-| `create_booking` | Books an appointment after collecting customer details, checking capacity |
-| `get_bookings_for_time_range` | Checks real-time availability before confirming a slot |
-| `query_knowledge_base` | Retrieves business-specific info (prices, policies, FAQs) from Bedrock KB |
+**Knowledge base & availability**
+| Tool | What it does |
+|------|----------------|
+| **`queryKnowledgeBase`** | Retrieves business-specific information from the Bedrock Knowledge Base. The agent calls this whenever the user asks about prices, hours, location, services, policies, FAQs, or any company-specific info — it does not answer such questions without querying the KB first. |
 
-The agent collects the right info based on business type — for a **gaming cafe** it asks about machine type and hours; for a **clinic** it asks for the doctor and reason for visit; for a **salon** it asks about the branch and service.
+**Bookings (gaming cafe, salon, clinic)**
+| Tool | What it does |
+|------|----------------|
+| **`getBookingsForTimeRange`** | Checks existing bookings for a center, branch, or doctor within a given time range. Used to determine real-time availability before confirming a slot. |
+| **`createBooking`** | Creates and persists a confirmed booking: center/branch/doctor, machine type or service, date/time, duration, customer name, and phone. Used after the agent has checked availability and collected details. |
+
+**General business (no appointments)**
+| Tool | What it does |
+|------|----------------|
+| **`createRequest`** | Creates a callback or contact request when the caller wants to leave a message or be called back. Shows in the dashboard **Requests** tab. Not used for booking appointments. |
+
+**Customer support**
+| Tool | What it does |
+|------|----------------|
+| **`createSupportTicket`** | Creates a support ticket (issue description, category). Used for customer support businesses. |
+| **`checkTicketStatus`** | Looks up existing tickets by customer phone so the agent can report status. |
+
+**Clinic**
+| Tool | What it does |
+|------|----------------|
+| **`createClinicToken`** | Issues a queue token for a clinic visit (e.g. when a patient calls to get a token/queue number for a doctor). |
+
+**Other**
+| Tool | What it does |
+|------|----------------|
+| **`lookupCatalogItems`** | Looks up products in the business catalog (for businesses with a product catalog). |
+| **`updateOnboardingField`** | Used during **voice onboarding** to fill in business details as the user speaks (e.g. business name, handle, type). |
+
+The agent chooses the right tools and collects the right info by business type: for a **gaming cafe** it uses availability and createBooking with center/machine type; for a **salon** with branch and service; for a **clinic** with doctor and optionally createClinicToken; for **general** it uses createRequest only; for **customer support** it uses createSupportTicket and checkTicketStatus.
 
 ---
 
@@ -133,9 +160,11 @@ The agent collects the right info based on business type — for a **gaming cafe
 
 | Feature | Description |
 |---------|-------------|
-| **Onboarding Wizard** | 4-step guided setup — pick business type (gaming cafe, salon, clinic, retail shop), add services/branches/doctors/machines, configure the AI persona |
-| **Bookings Management** | View, create, cancel bookings. Capacity checking per branch/doctor/machine. Slot granularity + buffer config |
-| **Customer Directory** | Auto-populated from bookings and conversations. Track last seen, contact info |
+| **Onboarding Wizard** | Guided setup — pick business type (gaming cafe, salon, general, or customer support), add locations/services/categories, configure the AI persona |
+| **Bookings Management** | View, create, cancel bookings (gaming cafe, salon, clinic). Capacity checking per branch/doctor/machine. Slot granularity + buffer config |
+| **Requests** | For **general** business type: capture callback/contact requests from the AI; view and manage in the Requests tab |
+| **Tickets** | For **customer support** type: AI creates tickets from calls; view and track open/resolved tickets in the Tickets tab |
+| **Customer Directory** | Auto-populated from bookings, conversations, and requests. Track last seen, contact info |
 | **Conversations & Recordings** | Full transcript of every AI conversation. MP3 recording playback of voice calls (mixed stereo) |
 | **Knowledge Base** | Upload PDFs, images (OCR via Textract), documents. Auto-syncs business data. Preview what the AI knows |
 | **Voice Configuration** | Choose from 12 voice personas (Tiffany, Matthew, Amy, Arjun, Lupe, Carlos, etc.). Write custom system prompts. Toggle phone/email capture |
@@ -144,7 +173,7 @@ The agent collects the right info based on business type — for a **gaming cafe
 | **Phone Numbers (DIDs)** | Assign dedicated phone numbers. Incoming calls auto-routed to the AI via SIP trunk |
 | **Credits System** | Per-business call credit balance. Track usage and top up |
 | **Team Members** | Invite team members by email. Owner-only access control |
-| **Clinic Token Queue** | Real-time patient queue with token states: CALLED, DONE, NO_SHOW |
+| **Clinic Token Queue** | For **clinic** type: real-time patient queue with token states (CALLED, DONE, NO_SHOW) |
 
 ### For Customers
 
@@ -160,8 +189,10 @@ The agent collects the right info based on business type — for a **gaming cafe
 | Feature | Description |
 |---------|-------------|
 | **Super Admin Dashboard** | Overview of all businesses, phone numbers, payments, credits |
+| **Salesbot & Leads** | Search for leads by business type and location (e.g. Google Places); create outbound call campaigns |
 | **Revenue Tracking** | Aggregate payment history across all businesses |
 | **Phone Inventory** | Manage DID pool — assign/release numbers |
+| **Credits** | View and manage call credits across businesses |
 
 ---
 
@@ -247,7 +278,7 @@ yandle/
 ## How It Works — End to End
 
 ### 1. Business Onboarding
-Owner signs up → picks business type → adds services, branches, doctors, or machines → Yandle auto-creates a Bedrock Knowledge Base (using Nova Multimodal Embeddings), syncs all business data, and the AI agent is ready.
+Owner signs up → picks business type (gaming cafe, salon, general, or customer support) → adds locations, services, or support categories → Yandle auto-creates a Bedrock Knowledge Base (using Nova Multimodal Embeddings), syncs all business data, and the AI agent is ready.
 
 ### 2. Customer Calls the Business
 Phone rings → SIP trunk intercepts → routes to Yandle's Sonic service → Nova Sonic picks up → *"Hi, welcome to M80 Esports! How can I help you today?"*
@@ -271,11 +302,12 @@ Dashboard shows today's bookings, recent conversations with full transcripts and
 ## Business Types Supported
 
 | Type | What the AI Manages |
-|------|-------------------|
-| **Gaming Cafe** | Machine inventory (PC, PS5, VR, etc.), hourly slots, center capacity |
+|------|---------------------|
+| **Gaming Cafe** | Machine inventory (PC, PS5, VR, etc.), locations/centers, hourly slots, capacity-based bookings |
 | **Salon** | Multiple branches, services (haircut, facial, etc.), appointment slots with branch capacity |
-| **Clinic** | Doctors (with specialties), appointment booking per doctor, token queue (CALLED/DONE/NO_SHOW) |
-| **Retail Shop** | Product catalog, customer inquiries, general business Q&A |
+| **Clinic** | Doctors (with specialties), appointment booking per doctor, token queue (CALLED, DONE, NO_SHOW) |
+| **General** | No appointment booking; AI answers questions, captures leads, and creates **callback/contact requests** (managed in the Requests tab) |
+| **Customer Support** | AI categorizes issues, creates **tickets**, and tracks resolutions (managed in the Tickets tab) |
 
 ---
 
