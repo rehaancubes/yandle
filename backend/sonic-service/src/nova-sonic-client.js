@@ -72,9 +72,17 @@ const CREATE_BOOKING_SCHEMA = {
       type: "string",
       description: "Service ID (salon/clinic); duration can be taken from service if not provided.",
     },
+    serviceName: {
+      type: "string",
+      description: "Service name (e.g. 'Haircut Men', 'Colour Women'). Used when serviceId is not known; the system will look up the matching service by name.",
+    },
     branchId: {
       type: "string",
       description: "Branch ID for salon bookings.",
+    },
+    branchName: {
+      type: "string",
+      description: "Branch name (e.g. 'Downtown Branch'). Used when branchId is not known; the system will look up the matching branch by name.",
     },
     doctorId: {
       type: "string",
@@ -159,6 +167,54 @@ const CREATE_CLINIC_TOKEN_SCHEMA = {
     doctorId: { type: "string", description: "Doctor ID to queue for, if specified by the patient." }
   },
   required: ["handle"]
+};
+
+// Create request tool (general business type — callback/contact requests)
+const CREATE_REQUEST_SCHEMA = {
+  type: "object",
+  properties: {
+    handle: { type: "string", description: "The VOXA business handle." },
+    callerName: { type: "string", description: "Full name of the caller requesting a callback or leaving a message." },
+    phone: { type: "string", description: "Caller's phone number." },
+    email: { type: "string", description: "Caller's email address." },
+    description: { type: "string", description: "Brief description of what the caller needs — reason for callback, question, or message." },
+  },
+  required: ["handle", "callerName"],
+};
+
+// Create support ticket tool (customer_support business type)
+const CREATE_SUPPORT_TICKET_SCHEMA = {
+  type: "object",
+  properties: {
+    handle: { type: "string", description: "The VOXA business handle." },
+    customerName: { type: "string", description: "Customer's full name." },
+    phone: { type: "string", description: "Customer phone number." },
+    email: { type: "string", description: "Customer email address." },
+    category: { type: "string", description: "Issue category (e.g. 'Billing', 'Technical', 'Account', 'Product'). Use one from the predefined categories if available." },
+    description: { type: "string", description: "Detailed description of the customer's issue or complaint." },
+    priority: { type: "string", enum: ["low", "medium", "high"], description: "Priority level based on urgency. Default is 'medium'." },
+  },
+  required: ["handle", "customerName", "description"],
+};
+
+// Check ticket status tool (customer_support business type)
+const CHECK_TICKET_STATUS_SCHEMA = {
+  type: "object",
+  properties: {
+    handle: { type: "string", description: "The VOXA business handle." },
+    phone: { type: "string", description: "Customer phone number to look up existing tickets." },
+  },
+  required: ["handle", "phone"],
+};
+
+// Onboarding field update tool (verbal onboarding — sets form fields in the web client)
+const UPDATE_ONBOARDING_FIELD_SCHEMA = {
+  type: "object",
+  properties: {
+    field: { type: "string", description: "The action/field to update. Options: businessType (gaming_cafe|salon|clinic|general|customer_support), handle (lowercase slug), salon_name, clinic_name, brand_name, business_name, addBranch (JSON: {name,address,capacity}), addService (JSON: {name,gender,price,duration,concurrent,branchIndex}), addDoctor (JSON: {name,specialty,avgConsultMinutes}), addLocation (JSON: {name,address}), addGamingLocation (JSON: {name,address,machines:[{type,qty,pricePerHour}]}), addSupportCategory (plain string), setSla (JSON: {response,resolution}), goToStep (0-4), finish (submit onboarding)." },
+    value: { type: "string", description: "The value — plain string for simple fields, JSON string for complex fields (addBranch, addService, etc.)." },
+  },
+  required: ["field", "value"],
 };
 
 // Bedrock Knowledge Base tool (from AWS sample pattern)
@@ -371,10 +427,12 @@ export class NovaSonicBidirectionalStreamClient {
       promptName: randomUUID(),
       audioContentId: randomUUID(),
       isActive: true,
-      // Optional contextual fields that callers can pass via config (for example: handle, knowledgeBaseId)
+      // Optional contextual fields that callers can pass via config (for example: handle, knowledgeBaseId, socket, mode)
       context: {
         handle: config.handle,
         knowledgeBaseId: config.knowledgeBaseId,
+        socket: config.socket,
+        mode: config.mode,
       },
     };
     this.sessions.set(sessionId, session);
@@ -447,13 +505,49 @@ export class NovaSonicBidirectionalStreamClient {
       }
     });
 
+    // Add request tool for general businesses
+    tools.push({
+      toolSpec: {
+        name: "createRequest",
+        description: "Create a callback/contact request when a caller wants to leave a message, request a callback, or report an issue. Use for general businesses.",
+        inputSchema: { json: JSON.stringify(CREATE_REQUEST_SCHEMA) }
+      }
+    });
+
+    // Add support ticket tools for customer_support businesses
+    tools.push({
+      toolSpec: {
+        name: "createSupportTicket",
+        description: "Create a support ticket for a customer issue. Collect the issue description and categorize it. Use for customer support businesses.",
+        inputSchema: { json: JSON.stringify(CREATE_SUPPORT_TICKET_SCHEMA) }
+      }
+    });
+    tools.push({
+      toolSpec: {
+        name: "checkTicketStatus",
+        description: "Look up existing support tickets by customer phone number. Use when a customer asks about the status of their previously raised ticket.",
+        inputSchema: { json: JSON.stringify(CHECK_TICKET_STATUS_SCHEMA) }
+      }
+    });
+
+    // Add onboarding field update tool when session is in onboarding mode
+    if (session.context?.mode === "onboarding") {
+      tools.push({
+        toolSpec: {
+          name: "updateOnboardingField",
+          description: "Update a form field in the onboarding wizard. Use this to fill in business details as the user speaks them. Call once per field.",
+          inputSchema: { json: JSON.stringify(UPDATE_ONBOARDING_FIELD_SCHEMA) }
+        }
+      });
+    }
+
     // Add Bedrock Knowledge Base tool when a knowledge base is configured (per session or env)
     if (session.context?.knowledgeBaseId) {
       tools.push({
         toolSpec: {
           name: "queryKnowledgeBase",
           description:
-            "Search the business knowledge base for policies, FAQs, service details, pricing, or other information. Use this when the user asks about company-specific information that may be in the knowledge base.",
+            "Look up answers from the business knowledge base. You MUST call this tool whenever the user asks about this business: prices, hours, location, services, policies, FAQs, or any company-specific information. Pass the user's question as the 'query' parameter. Do not answer such questions without calling this tool first.",
           inputSchema: {
             json: JSON.stringify(KNOWLEDGE_BASE_TOOL_SCHEMA),
           },
@@ -740,6 +834,8 @@ export class NovaSonicBidirectionalStreamClient {
       promptName: session.promptName,
       handle: session.context?.handle,
       knowledgeBaseId: session.context?.knowledgeBaseId,
+      socket: session.context?.socket,
+      mode: session.context?.mode,
     };
 
     // Helper to push a full toolResult sequence (contentStart -> toolResult -> contentEnd).

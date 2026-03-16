@@ -27,10 +27,10 @@ function uid() {
 
 // ─── Business step types ──────────────────────────────────────────────────────
 
-type GamingLocation = { id: string; name: string; address: string; lat?: number; lng?: number; machines: { id: string; type: string; qty: number; pricePerHour: number }[] };
-type SalonBranch = { id: string; name: string; address: string; lat?: number; lng?: number; capacity: number; services: { id: string; name: string; gender: "men" | "women" | "unisex"; price: number; durationMinutes: number; concurrent: number }[] };
+type GamingLocation = { id: string; name: string; address: string; lat?: number; lng?: number; placeId?: string; machines: { id: string; type: string; qty: number; pricePerHour: number }[] };
+type SalonBranch = { id: string; name: string; address: string; lat?: number; lng?: number; placeId?: string; capacity: number; services: { id: string; name: string; gender: "men" | "women" | "unisex"; price: number; durationMinutes: number; concurrent: number }[] };
 type ClinicDoctor = { id: string; name: string; specialty: string; avgConsultMinutes: number };
-type GeneralLocation = { id: string; name: string; address: string; lat?: number; lng?: number };
+type GeneralLocation = { id: string; name: string; address: string; lat?: number; lng?: number; placeId?: string };
 type SupportCategory = { id: string; name: string };
 
 type BusinessData = {
@@ -47,39 +47,78 @@ type BusinessData = {
 
 function PlacesAddressInput({ value, onChange, placeholder }: {
   value: string;
-  onChange: (addr: { address: string; lat?: number; lng?: number }) => void;
+  onChange: (addr: { address: string; lat?: number; lng?: number; placeId?: string }) => void;
   placeholder?: string;
 }) {
   const [query, setQuery] = useState(value);
   const [results, setResults] = useState<{ description: string; place_id: string }[]>([]);
+  const [placesReady, setPlacesReady] = useState(false);
   const autoSvc = useRef<any>(null);
-  const placesSvc = useRef<any>(null);
+  // Detached div for PlacesService only — never attach to React tree so Google cannot mutate React's DOM (avoids removeChild error)
+  const placesServiceContainerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    placesServiceContainerRef.current = document.createElement("div");
+    return () => { placesServiceContainerRef.current = null; };
+  }, []);
 
   useEffect(() => { setQuery(value); }, [value]);
 
-  const search = (q: string) => {
-    if (!q || q.length < 3) { setResults([]); return; }
-    if (!(window as any).google?.maps?.places) return;
-    if (!autoSvc.current) autoSvc.current = new (window as any).google.maps.places.AutocompleteService();
-    autoSvc.current.getPlacePredictions(
-      { input: q, types: ["establishment", "geocode"] },
-      (preds: any[], status: string) => {
-        if (status === "OK" && preds) setResults(preds.map((p: any) => ({ description: p.description, place_id: p.place_id })));
+  // Wait for Google Maps Places API to be loaded
+  useEffect(() => {
+    const g = (window as any).google;
+    if (g?.maps?.places) {
+      setPlacesReady(true);
+      return;
+    }
+    const check = setInterval(() => {
+      if ((window as any).google?.maps?.places) {
+        setPlacesReady(true);
+        clearInterval(check);
       }
-    );
-  };
+    }, 200);
+    return () => clearInterval(check);
+  }, []);
+
+  // Debounced search (min 3 chars)
+  useEffect(() => {
+    if (!placesReady || !query || query.length < 3) {
+      setResults([]);
+      return;
+    }
+    const t = setTimeout(() => {
+      const g = (window as any).google;
+      if (!g?.maps?.places) return;
+      if (!autoSvc.current) autoSvc.current = new g.maps.places.AutocompleteService();
+      autoSvc.current.getPlacePredictions(
+        { input: query, types: ["establishment", "geocode"] },
+        (preds: any[] | null, status: string) => {
+          if ((status === "OK" || status === g.maps.places.PlacesServiceStatus?.OK) && Array.isArray(preds)) {
+            setResults(preds.map((p: any) => ({ description: p.description, place_id: p.place_id })));
+          } else {
+            setResults([]);
+          }
+        }
+      );
+    }, 350);
+    return () => clearTimeout(t);
+  }, [placesReady, query]);
 
   const select = (placeId: string, desc: string) => {
-    if (!(window as any).google?.maps?.places) return;
-    if (!placesSvc.current) placesSvc.current = new (window as any).google.maps.places.PlacesService(document.createElement("div"));
-    placesSvc.current.getDetails(
-      { placeId, fields: ["geometry", "name", "formatted_address"] },
+    const g = (window as any).google;
+    if (!g?.maps?.places) return;
+    const container = placesServiceContainerRef.current ?? document.createElement("div");
+    const placesSvc = new g.maps.places.PlacesService(container);
+    placesSvc.getDetails(
+      { placeId, fields: ["geometry", "name", "formatted_address", "place_id"] },
       (place: any, status: string) => {
-        if (status === "OK" && place?.geometry?.location) {
+        const ok = status === "OK" || status === g.maps.places.PlacesServiceStatus?.OK;
+        if (ok && place?.geometry?.location) {
+          const lat = typeof place.geometry.location.lat === "function" ? place.geometry.location.lat() : place.geometry.location.lat;
+          const lng = typeof place.geometry.location.lng === "function" ? place.geometry.location.lng() : place.geometry.location.lng;
           const addr = place.formatted_address || desc;
           setQuery(addr);
           setResults([]);
-          onChange({ address: addr, lat: place.geometry.location.lat(), lng: place.geometry.location.lng() });
+          onChange({ address: addr, lat, lng, placeId: place.place_id || placeId });
         }
       }
     );
@@ -89,14 +128,18 @@ function PlacesAddressInput({ value, onChange, placeholder }: {
     <div className="relative">
       <Input
         value={query}
-        onChange={(e) => { setQuery(e.target.value); search(e.target.value); onChange({ address: e.target.value }); }}
-        placeholder={placeholder || "Search address..."}
+        onChange={(e) => {
+          const v = e.target.value;
+          setQuery(v);
+          onChange({ address: v });
+        }}
+        placeholder={placesReady ? (placeholder || "Search address (e.g. street, city)...") : "Loading maps..."}
         className="bg-card/60 h-9 text-sm"
       />
       {results.length > 0 && (
         <div className="absolute z-20 top-full left-0 right-0 mt-1 rounded-lg border border-border bg-popover shadow-lg max-h-40 overflow-y-auto">
           {results.map((r) => (
-            <button key={r.place_id} onClick={() => select(r.place_id, r.description)} className="w-full text-left px-3 py-2 text-xs hover:bg-accent transition-colors border-b border-border/50 last:border-0">
+            <button key={r.place_id} type="button" onClick={() => select(r.place_id, r.description)} className="w-full text-left px-3 py-2 text-xs hover:bg-accent transition-colors border-b border-border/50 last:border-0">
               {r.description}
             </button>
           ))}
@@ -117,7 +160,7 @@ const Onboarding = () => {
   const [selectedCase, setSelectedCase] = useState<UseCase | null>(null);
 
   // Shared
-  const [voxaHandle, setVoxaHandle] = useState("");
+  const [yandleHandle, setYandleHandle] = useState("");
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [isSaving, setIsSaving] = useState(false);
 
@@ -150,7 +193,7 @@ const Onboarding = () => {
   useEffect(() => {
     if (!apiBase) return;
     setLoadingPhones(true);
-    const token = localStorage.getItem("voxa_id_token") || "";
+    const token = localStorage.getItem("yandle_id_token") || "";
     fetch(`${apiBase}/phone-numbers/available`, { headers: { authorization: `Bearer ${token}` } })
       .then((r) => r.json())
       .then((d) => setAvailablePhones(d.numbers || []))
@@ -185,7 +228,9 @@ const Onboarding = () => {
   // ─── Steps ─────────────────────────────────────────────────────────────────
 
   const totalSteps = 5;
-  function goNext() { setStep((s) => s + 1); }
+  function goNext() { setStep((s) => Math.min(s + 1, 4)); }
+  // Never allow step past 4 (e.g. from old session or voice)
+  useEffect(() => { if (step > 4) setStep(4); }, [step]);
   function goBack() {
     if (step === 0) { navigate("/"); return; }
     setStep((s) => s - 1);
@@ -196,7 +241,7 @@ const Onboarding = () => {
   function deriveName(): string {
     const typeName = formData.salon_name || formData.clinic_name || formData.brand_name || formData.business_name || "";
     if (typeName.trim()) return typeName.trim();
-    return voxaHandle.trim().replace(/-/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase());
+    return yandleHandle.trim().replace(/-/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase());
   }
 
   // ─── Voice onboarding ──────────────────────────────────────────────────────
@@ -232,12 +277,11 @@ const Onboarding = () => {
       if (match) {
         setSelectedCase(match);
         setFormData({});
-        setStep(2); // show the type selection step
-        setTimeout(() => setStep(3), 1200); // advance to handle step
+        setStep(2); // show the type selection step — agent will confirm before advancing
       }
     } else if (field === "handle") {
-      setVoxaHandle(value.toLowerCase().replace(/[^a-z0-9-]/g, ""));
-      setStep(3); // show handle step with value filled
+      setYandleHandle(value.toLowerCase().replace(/[^a-z0-9-]/g, ""));
+      setStep(3); // show handle step with value filled — agent will confirm before advancing
     } else if (field === "goToStep") {
       const s = parseInt(value, 10);
       if (!isNaN(s) && s >= 0 && s <= 4) setStep(s);
@@ -354,37 +398,48 @@ const Onboarding = () => {
       return;
     }
 
-    const systemPrompt = `You are a VOXA onboarding assistant. You guide the user through setting up their business completely via voice. You handle EVERYTHING — the user just talks and you fill forms, navigate steps, add data, and submit. Be warm, concise (1-2 sentences per response), and ask one question at a time.
+    const systemPrompt = `You are a YANDLE onboarding assistant. You guide the user through setting up their business completely via voice. You handle EVERYTHING — the user just talks and you fill forms, navigate steps, add data, and submit. Be warm, concise (1-2 sentences per response), and ask one question at a time.
+
+CRITICAL RULE — ALWAYS CONFIRM BEFORE ADVANCING:
+- After filling in a field or completing a step, ALWAYS read back what you entered and ask "Does that look right?" or "Should I change anything?"
+- ONLY move to the next step after the user confirms (says yes, correct, looks good, etc.)
+- If the user wants to change something, update the field and confirm again before advancing.
+- NEVER auto-advance to the next step without explicit user confirmation.
 
 The UI has these steps that the user can see. You MUST guide them through each step in order:
 
-STEP 0 — Welcome (currently visible). Greet them warmly. Briefly explain VOXA gives them a business website, chat widget, and shareable link. Then say "Let's get started!" and move to step 1:
+STEP 0 — Welcome (currently visible). Greet them warmly. Briefly explain YANDLE gives them a business website, chat widget, and shareable link. Ask if they're ready to get started. When they say yes, move to step 1:
    → field="goToStep" value="1"
 
-STEP 1 — Phone Number. Ask if they'd like an AI phone number for their business (customers can call it). If yes, tell them they can pick one on screen. If they want to skip, that's fine too. Then move on:
+STEP 1 — Phone Number. The screen shows available phone numbers. Ask "Would you like to pick an AI phone number for your business? Customers will be able to call it." WAIT for the user to either pick a number on screen or say they want to skip. Do NOT advance until they explicitly say they've picked one or want to skip. Then ask "Ready to move on?" and only advance after confirmation:
    → field="goToStep" value="2"
 
-STEP 2 — Business Type. Ask what type of business they have. Options: Gaming Cafe, Salon, Clinic, General Business, or Customer Support.
+STEP 2 — Business Type. Ask what type of business they have. Options: Gaming Cafe, Salon, Clinic, General Business, or Customer Support. Wait for their answer.
    → field="businessType" value="<id>" where id is one of: gaming_cafe, salon, clinic, general, customer_support
+   After setting the type, confirm: "I've set your business type to [type]. Is that correct?"
    (This auto-shows step 2 briefly, then advances to step 3)
 
-STEP 3 — Handle. Ask them to pick a URL handle (their unique link: callcentral.io/their-handle). Lowercase letters, numbers, and hyphens only.
+STEP 3 — Handle. Suggest a URL handle based on their business name/type (e.g. "glamour-studio"). Say: "Your unique link will be callcentral.io/[handle]. How does that sound? You can change it if you'd like."
    → field="handle" value="<slug>"
-   Then move to step 4: field="goToStep" value="4"
+   WAIT for confirmation. If they want changes, update the handle and confirm again.
+   Only after they confirm: field="goToStep" value="4"
 
 STEP 4 — Business Details. First set the business name:
    → salon: field="salon_name" | clinic: field="clinic_name" | gaming_cafe: field="brand_name" | general or customer_support: field="business_name"
+   Confirm the name before continuing to type-specific details.
 
    Then collect type-specific details:
    SALON → Ask about branches: field="addBranch" value='{"name":"...","address":"..."}'
      Then services at that branch: field="addService" value='{"name":"...","gender":"unisex","price":500,"duration":30}'
+     After each service, ask "Want to add another service, or are we good?"
    CLINIC → Doctors: field="addDoctor" value='{"name":"...","specialty":"...","avgConsultMinutes":15}'
+     After each doctor, ask "Want to add another doctor?"
    GAMING_CAFE → Locations: field="addGamingLocation" value='{"name":"...","address":"...","machines":[{"type":"High-end PC","qty":10,"pricePerHour":200}]}'
    GENERAL → Locations: field="addLocation" value='{"name":"...","address":"..."}'
    CUSTOMER_SUPPORT → Categories: field="addSupportCategory" value="Billing" (once per category)
      Then SLA: field="setSla" value='{"response":24,"resolution":72}'
 
-FINISH — When they're done adding details, ask to confirm, then:
+FINISH — When they're done adding details, summarize everything: business type, name, handle, and all details added. Ask "Everything looks good. Should I complete the setup?" Only after they confirm:
    → field="finish" value="true"
 
 RULES:
@@ -392,8 +447,9 @@ RULES:
 - You can call the tool multiple times in sequence if the user gives several pieces of info at once.
 - Values for addBranch, addService, addDoctor, addGamingLocation, addLocation, setSla must be valid JSON strings.
 - addSupportCategory value is just the category name string.
-- Keep it conversational. If the user says "I have a salon called Glamour", set businessType AND salon_name in two tool calls.
-- Follow the step order. Don't skip steps unless the user explicitly asks to.`;
+- Keep it conversational. If the user says "I have a salon called Glamour", set businessType AND salon_name in two tool calls, then confirm both.
+- Follow the step order. Don't skip steps unless the user explicitly asks to.
+- NEVER advance to the next step without user saying yes/correct/confirmed.`;
 
     socket.emit("promptStart", { voiceId: "tiffany", outputSampleRate: 24000 });
     socket.emit("systemPrompt", { content: systemPrompt, voiceId: "tiffany" });
@@ -469,9 +525,9 @@ RULES:
   // ─── Submit ────────────────────────────────────────────────────────────────
 
   const handleFinish = async () => {
-    const normalizedHandle = voxaHandle.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
+    const normalizedHandle = yandleHandle.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
     if (!normalizedHandle) {
-      toast({ title: "Handle required", description: "Please choose a VOXA handle." });
+      toast({ title: "Handle required", description: "Please choose a YANDLE handle." });
       return;
     }
 
@@ -484,7 +540,7 @@ RULES:
       ownerSub: sub,
       useCaseId: selectedCase?.id,
       formData: { ...formData, ...bizData },
-      voxaHandle: normalizedHandle,
+      yandleHandle: normalizedHandle,
       displayName: name,
     }));
 
@@ -494,7 +550,7 @@ RULES:
       return;
     }
 
-    const token = localStorage.getItem("voxa_id_token") || "";
+    const token = localStorage.getItem("yandle_id_token") || "";
 
     try {
       // 1. Create handle (no primary address — locations have their own addresses)
@@ -507,7 +563,7 @@ RULES:
           textEnabled: true,
           voiceEnabled: true,
           useCaseId: selectedCase?.id,
-          persona: selectedCase ? `You are a helpful AI assistant for ${name}, a ${selectedCase.title.toLowerCase()}. Answer questions about services, bookings, and availability professionally.` : "VOXA assistant",
+          persona: selectedCase ? `You are a helpful AI assistant for ${name}, a ${selectedCase.title.toLowerCase()}. Answer questions about services, bookings, and availability professionally.` : "YANDLE assistant",
           knowledgeSummary: JSON.stringify(formData).slice(0, 1500),
           captureEmail: false,
           capturePhone: true,
@@ -549,6 +605,7 @@ RULES:
                 address: loc.address,
                 geoLat: loc.lat,
                 geoLng: loc.lng,
+                placeId: loc.placeId,
                 machines: loc.machines.map((m) => ({ name: m.type, type: m.type, count: m.qty, pricePerHour: m.pricePerHour })),
               }),
             });
@@ -558,7 +615,7 @@ RULES:
             const br = await fetch(`${apiBase}/branches`, {
               method: "POST",
               headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-              body: JSON.stringify({ handle: normalizedHandle, name: branch.name, location: branch.address, address: branch.address, geoLat: branch.lat, geoLng: branch.lng, capacity: branch.capacity }),
+              body: JSON.stringify({ handle: normalizedHandle, name: branch.name, location: branch.address, address: branch.address, geoLat: branch.lat, geoLng: branch.lng, placeId: branch.placeId, capacity: branch.capacity }),
             });
             if (br.ok) {
               const brData = await br.json();
@@ -594,7 +651,7 @@ RULES:
               method: "POST",
               headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
               body: JSON.stringify({
-                handle: normalizedHandle, name: loc.name, address: loc.address, geoLat: loc.lat, geoLng: loc.lng,
+                handle: normalizedHandle, name: loc.name, address: loc.address, geoLat: loc.lat, geoLng: loc.lng, placeId: loc.placeId,
               }),
             });
           }));
@@ -619,7 +676,7 @@ RULES:
                 method: "POST",
                 headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
                 body: JSON.stringify({
-                  handle: normalizedHandle, name: loc.name, address: loc.address, geoLat: loc.lat, geoLng: loc.lng,
+                  handle: normalizedHandle, name: loc.name, address: loc.address, geoLat: loc.lat, geoLng: loc.lng, placeId: loc.placeId,
                 }),
               });
             }));
@@ -646,7 +703,7 @@ RULES:
       return (
         <div className="space-y-8 max-w-xl mx-auto">
           <div className="text-center space-y-3">
-            <h1 className="font-display text-3xl sm:text-4xl font-bold">Welcome to VOXA</h1>
+            <h1 className="font-display text-3xl sm:text-4xl font-bold">Welcome to YANDLE</h1>
             <p className="text-muted-foreground text-lg">Here's what your business gets</p>
           </div>
 
@@ -788,12 +845,12 @@ RULES:
           </div>
           <div className="space-y-5">
             <div className="space-y-2">
-              <Label>VOXA handle</Label>
+              <Label>YANDLE handle</Label>
               <div className="flex rounded-lg border border-border bg-card/50 overflow-hidden focus-within:ring-2 focus-within:ring-ring">
                 <span className="px-3 text-sm text-muted-foreground bg-secondary/50 h-10 flex items-center whitespace-nowrap">callcentral.io/</span>
                 <input
-                  value={voxaHandle}
-                  onChange={(e) => setVoxaHandle(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+                  value={yandleHandle}
+                  onChange={(e) => setYandleHandle(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
                   placeholder="yourname"
                   className="flex-1 h-10 bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground"
                   autoFocus
@@ -806,8 +863,8 @@ RULES:
       );
     }
 
-    // Step 4: Type-specific setup
-    if (step === 4) {
+    // Step 4: Type-specific setup (also show this if step > 4 so we never show a blank step 5)
+    if (step >= 4) {
       const stepTitle = selectedCase?.id === "gaming_cafe" ? "Locations & Machines"
         : selectedCase?.id === "salon" ? "Branches & Services"
         : selectedCase?.id === "clinic" ? "Doctors"
@@ -822,6 +879,26 @@ RULES:
         : selectedCase?.id === "customer_support" ? "Configure support categories and SLA settings."
         : "";
 
+      // If no business type selected (e.g. landed here via voice or refresh), show recovery
+      if (!selectedCase) {
+        return (
+          <div className="space-y-8 max-w-2xl mx-auto">
+            <div className="text-center space-y-3">
+              <h1 className="font-display text-3xl sm:text-4xl font-bold">Setup</h1>
+              <p className="text-muted-foreground">Choose your business type to continue.</p>
+            </div>
+            <Card className="bg-card/50 border-border max-w-md mx-auto">
+              <CardContent className="p-6 space-y-4">
+                <p className="text-sm text-muted-foreground">No business type was selected. Go back and pick one to see your setup options.</p>
+                <Button variant="outline" onClick={() => setStep(2)} className="w-full">
+                  <ArrowLeft className="h-4 w-4 mr-2" /> Back to business type
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        );
+      }
+
       return (
         <div className="space-y-8 max-w-2xl mx-auto">
           <div className="text-center space-y-3">
@@ -831,7 +908,7 @@ RULES:
 
           {/* Type-specific name field (replaces displayName from old Step 2) */}
           <div className="space-y-4 max-w-md mx-auto">
-            {selectedCase?.fields.map((field) => (
+            {(selectedCase.fields ?? []).map((field) => (
               <div key={field.name} className="space-y-2">
                 <Label>{field.label}</Label>
                 {field.type === "textarea" ? (
@@ -873,8 +950,8 @@ RULES:
     return null;
   };
 
-  const isLastStep = step === 4;
-  const canProceed = step === 3 ? voxaHandle.trim().length >= 2 : true;
+  const isLastStep = step >= 4;
+  const canProceed = step === 3 ? yandleHandle.trim().length >= 2 : true;
 
   return (
     <div className="min-h-screen bg-background bg-grid relative">
@@ -895,8 +972,8 @@ RULES:
         <button onClick={goBack} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
           <ArrowLeft className="h-4 w-4" /> Back
         </button>
-        <span className="font-display text-lg font-bold text-gradient-primary">VOXA</span>
-        <span className="text-xs text-muted-foreground">Step {step + 1}</span>
+        <span className="font-display text-lg font-bold text-gradient-primary">YANDLE</span>
+        <span className="text-xs text-muted-foreground">Step {Math.min(step + 1, 5)}</span>
       </div>
 
       {/* Content */}
@@ -980,7 +1057,7 @@ function GamingSetup({ locations, onChange }: { locations: GamingLocation[]; onC
             </div>
             <PlacesAddressInput
               value={loc.address}
-              onChange={({ address, lat, lng }) => updateLocation(loc.id, { address, ...(lat != null ? { lat, lng } : {}) })}
+              onChange={({ address, lat, lng, placeId }) => updateLocation(loc.id, { address, ...(lat != null ? { lat, lng } : {}), ...(placeId ? { placeId } : {}) })}
               placeholder="Search location address..."
             />
             <div className="space-y-2">
@@ -1032,7 +1109,7 @@ function SalonSetup({ branches, onChange }: { branches: SalonBranch[]; onChange:
             <div className="grid grid-cols-[1fr_auto] gap-2">
               <PlacesAddressInput
                 value={br.address}
-                onChange={({ address, lat, lng }) => updateBranch(br.id, { address, ...(lat != null ? { lat, lng } : {}) })}
+                onChange={({ address, lat, lng, placeId }) => updateBranch(br.id, { address, ...(lat != null ? { lat, lng } : {}), ...(placeId ? { placeId } : {}) })}
                 placeholder="Search branch address..."
               />
               <div className="flex items-center gap-2">
@@ -1130,7 +1207,7 @@ function GeneralSetup({ locations, onChange }: { locations: GeneralLocation[]; o
             </div>
             <PlacesAddressInput
               value={loc.address}
-              onChange={({ address, lat, lng }) => updateLocation(loc.id, { address, ...(lat != null ? { lat, lng } : {}) })}
+              onChange={({ address, lat, lng, placeId }) => updateLocation(loc.id, { address, ...(lat != null ? { lat, lng } : {}), ...(placeId ? { placeId } : {}) })}
               placeholder="Search location address..."
             />
           </CardContent>
@@ -1216,7 +1293,7 @@ function CustomerSupportSetup({
               </div>
               <PlacesAddressInput
                 value={loc.address}
-                onChange={({ address, lat, lng }) => updateLocation(loc.id, { address, ...(lat != null ? { lat, lng } : {}) })}
+                onChange={({ address, lat, lng, placeId }) => updateLocation(loc.id, { address, ...(lat != null ? { lat, lng } : {}), ...(placeId ? { placeId } : {}) })}
                 placeholder="Search address..."
               />
             </CardContent>

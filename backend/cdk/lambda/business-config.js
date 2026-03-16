@@ -17,7 +17,7 @@ function normalizeHandle(raw) {
     .replace(/^-+|-+$/g, "");
 }
 
-const { assertAccess } = require('./auth-helper');
+const { assertAccess, getCallerFromEvent } = require('./auth-helper');
 
 function json(body, status = 200) {
   return {
@@ -33,8 +33,7 @@ function err(message, status = 400) {
 
 exports.handler = async (event) => {
   try {
-    const sub = event?.requestContext?.authorizer?.jwt?.claims?.sub;
-    const email = (event?.requestContext?.authorizer?.jwt?.claims?.email || "").toLowerCase();
+    const { sub, email } = getCallerFromEvent(event);
     if (!sub) {
       return err("Unauthorized", 401);
     }
@@ -67,14 +66,17 @@ exports.handler = async (event) => {
           const profileRes = await ddb.get({ TableName: process.env.HANDLES_TABLE, Key: { handle } }).promise();
           const useCase = profileRes.Item?.useCaseId;
           if (useCase === 'gaming_cafe') defaultGranularity = 60;
-          else if (useCase === 'retail_shop') defaultGranularity = 30;
+          else if (useCase === 'general') defaultGranularity = 30;
+          else if (useCase === 'customer_support') defaultGranularity = 15;
         } catch (_) {}
       }
 
       return json({
         handle,
         slotGranularityMinutes: item.slotGranularityMinutes ?? defaultGranularity,
-        bufferBetweenMinutes: item.bufferBetweenMinutes ?? 0
+        bufferBetweenMinutes: item.bufferBetweenMinutes ?? 0,
+        openHour: item.openHour ?? 9,
+        closeHour: item.closeHour ?? 18
       });
     }
 
@@ -86,6 +88,12 @@ exports.handler = async (event) => {
       const bufferBetweenMinutes = body.bufferBetweenMinutes != null
         ? Math.max(0, Math.min(60, Number(body.bufferBetweenMinutes)))
         : undefined;
+      const openHour = body.openHour != null
+        ? Math.max(0, Math.min(23, Number(body.openHour)))
+        : undefined;
+      const closeHour = body.closeHour != null
+        ? Math.max(0, Math.min(24, Number(body.closeHour)))
+        : undefined;
       const existing = await ddb.get({
         TableName: process.env.BUSINESS_CONFIG_TABLE,
         Key: { handle, configType: SLOT_CONFIG_TYPE }
@@ -95,6 +103,8 @@ exports.handler = async (event) => {
         ...current,
         slotGranularityMinutes: slotGranularityMinutes ?? current.slotGranularityMinutes ?? 15,
         bufferBetweenMinutes: bufferBetweenMinutes ?? current.bufferBetweenMinutes ?? 0,
+        openHour: openHour ?? current.openHour ?? 9,
+        closeHour: closeHour ?? current.closeHour ?? 18,
         updatedAt: new Date().toISOString()
       };
       await ddb.put({
@@ -108,7 +118,7 @@ exports.handler = async (event) => {
     return err("Method not allowed", 405);
   } catch (e) {
     if (e.message === "FORBIDDEN") {
-      return err("You do not own this handle.", 403);
+      return err("You don't have access to this handle. Sign in with the account that owns it, or ask the owner to add you as a manager.", 403);
     }
     console.error("[business-config]", e);
     return err("Internal server error", 500);

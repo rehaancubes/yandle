@@ -43,6 +43,8 @@ const CATALOG_TABLE = process.env.CATALOG_TABLE;
 const TOKENS_TABLE = process.env.TOKENS_TABLE;
 const CONVERSATIONS_TABLE = process.env.CONVERSATIONS_TABLE;
 const CREDITS_TABLE = process.env.CREDITS_TABLE;
+const REQUESTS_TABLE = process.env.REQUESTS_TABLE;
+const TICKETS_TABLE = process.env.TICKETS_TABLE;
 
 // DynamoDB client (used for booking tools)
 const ddbDoc =
@@ -180,8 +182,10 @@ function attachToolHandlers(client) {
       const phone = String(input.phone || "").trim();
       const email = String(input.email || "").trim();
       const notes = String(input.notes || "").trim();
-      const serviceId = input.serviceId != null ? String(input.serviceId).trim() : "";
-      const branchId = input.branchId != null ? String(input.branchId).trim() : "";
+      let serviceId = input.serviceId != null ? String(input.serviceId).trim() : "";
+      const serviceName = String(input.serviceName || "").trim();
+      let branchId = input.branchId != null ? String(input.branchId).trim() : "";
+      const branchName = String(input.branchName || "").trim();
       const doctorId = input.doctorId != null ? String(input.doctorId).trim() : "";
       const locationId = input.locationId != null ? String(input.locationId).trim() : "";
 
@@ -213,6 +217,43 @@ function attachToolHandlers(client) {
         }
         if (captureEmail && !email) {
           return { ok: false, error: "Email is required for this business." };
+        }
+      }
+
+      // Resolve serviceName → serviceId if serviceId not provided
+      if (!serviceId && serviceName && SERVICES_TABLE && ddbDoc) {
+        const svcQuery = await ddbDoc.send(
+          new QueryCommand({
+            TableName: SERVICES_TABLE,
+            KeyConditionExpression: "handle = :h",
+            ExpressionAttributeValues: { ":h": handle },
+          })
+        );
+        const match = (svcQuery.Items || []).find(
+          (s) => (s.name || "").toLowerCase() === serviceName.toLowerCase()
+        );
+        if (match) {
+          serviceId = match.serviceId;
+          if (!durationMinutes && match.durationMinutes) {
+            durationMinutes = Number(match.durationMinutes);
+          }
+        }
+      }
+
+      // Resolve branchName → branchId if branchId not provided
+      if (!branchId && branchName && BRANCHES_TABLE && ddbDoc) {
+        const brQuery = await ddbDoc.send(
+          new QueryCommand({
+            TableName: BRANCHES_TABLE,
+            KeyConditionExpression: "handle = :h",
+            ExpressionAttributeValues: { ":h": handle },
+          })
+        );
+        const match = (brQuery.Items || []).find(
+          (b) => (b.name || "").toLowerCase() === branchName.toLowerCase()
+        );
+        if (match) {
+          branchId = match.branchId;
         }
       }
 
@@ -623,6 +664,198 @@ function attachToolHandlers(client) {
       }
     }
   );
+
+  // Create request tool — used during general business voice sessions
+  client.registerToolHandler(
+    "createRequest",
+    async (input, { handle: sessionHandle } = {}) => {
+      if (!REQUESTS_TABLE || !ddbDoc) {
+        return { ok: false, error: "Requests not configured." };
+      }
+      const handle = normalizeHandle(input.handle || sessionHandle);
+      const callerName = String(input.callerName || "").trim();
+      const phone = String(input.phone || "").trim();
+      const email = String(input.email || "").trim();
+      const description = String(input.description || "").trim();
+
+      if (!handle || !callerName) {
+        return { ok: false, error: "Missing required fields: handle, callerName." };
+      }
+
+      const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const now = new Date().toISOString();
+
+      const item = {
+        handle,
+        requestId,
+        callerName,
+        phone: phone || null,
+        email: email || null,
+        description: description || null,
+        classification: "unknown",
+        source: "call",
+        status: "new",
+        createdAt: now,
+        updatedAt: now
+      };
+
+      await ddbDoc.send(new PutCommand({ TableName: REQUESTS_TABLE, Item: item }));
+
+      // Upsert customer record
+      if (CUSTOMERS_TABLE && (phone || email)) {
+        try {
+          const custId = phone || email;
+          await ddbDoc.send(new PutCommand({
+            TableName: CUSTOMERS_TABLE,
+            Item: {
+              handle, customerId: custId,
+              name: callerName, phone: phone || undefined, email: email || undefined,
+              lastSeenAt: now, source: "call"
+            },
+            ConditionExpression: "attribute_not_exists(customerId)"
+          }));
+        } catch (e) {
+          if (e.name !== "ConditionalCheckFailedException") console.warn("[createRequest] customer upsert error:", e.message);
+        }
+      }
+
+      return {
+        ok: true,
+        requestId,
+        message: `Callback request created for ${callerName}. The business will get back to you shortly.`
+      };
+    }
+  );
+
+  // Create support ticket tool — used during customer_support voice sessions
+  client.registerToolHandler(
+    "createSupportTicket",
+    async (input, { handle: sessionHandle } = {}) => {
+      if (!TICKETS_TABLE || !ddbDoc) {
+        return { ok: false, error: "Tickets not configured." };
+      }
+      const handle = normalizeHandle(input.handle || sessionHandle);
+      const customerName = String(input.customerName || "").trim();
+      const phone = String(input.phone || "").trim();
+      const email = String(input.email || "").trim();
+      const category = String(input.category || "General").trim();
+      const description = String(input.description || "").trim();
+      const priority = String(input.priority || "medium").trim();
+
+      if (!handle || !customerName || !description) {
+        return { ok: false, error: "Missing required fields: handle, customerName, description." };
+      }
+
+      const ticketId = `TKT-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+      const now = new Date().toISOString();
+
+      const item = {
+        handle,
+        ticketId,
+        customerName,
+        phone: phone || null,
+        email: email || null,
+        category,
+        description,
+        status: "Open",
+        priority,
+        source: "call",
+        createdAt: now,
+        updatedAt: now
+      };
+
+      await ddbDoc.send(new PutCommand({ TableName: TICKETS_TABLE, Item: item }));
+
+      // Upsert customer record
+      if (CUSTOMERS_TABLE && (phone || email)) {
+        try {
+          const custId = phone || email;
+          await ddbDoc.send(new PutCommand({
+            TableName: CUSTOMERS_TABLE,
+            Item: {
+              handle, customerId: custId,
+              name: customerName, phone: phone || undefined, email: email || undefined,
+              lastSeenAt: now, source: "call"
+            },
+            ConditionExpression: "attribute_not_exists(customerId)"
+          }));
+        } catch (e) {
+          if (e.name !== "ConditionalCheckFailedException") console.warn("[createSupportTicket] customer upsert error:", e.message);
+        }
+      }
+
+      return {
+        ok: true,
+        ticketId,
+        message: `Support ticket ${ticketId} created for ${customerName}. Category: ${category}. Priority: ${priority}. Our team will follow up.`
+      };
+    }
+  );
+
+  // Onboarding field update tool — emits field updates back to the web client
+  client.registerToolHandler(
+    "updateOnboardingField",
+    async (input, context = {}) => {
+      const field = String(input.field || "").trim();
+      const value = String(input.value || "").trim();
+      if (!field || !value) {
+        return { ok: false, error: "field and value are required." };
+      }
+      // Emit the field update to the web client via socket
+      if (context.socket) {
+        context.socket.emit("onboardingFieldUpdate", { field, value });
+      }
+      return { ok: true, field, value, message: `Updated ${field} to "${value}".` };
+    }
+  );
+
+  // Check ticket status tool — look up existing tickets by phone
+  client.registerToolHandler(
+    "checkTicketStatus",
+    async (input, { handle: sessionHandle } = {}) => {
+      if (!TICKETS_TABLE || !ddbDoc) {
+        return { ok: false, error: "Tickets not configured." };
+      }
+      const handle = normalizeHandle(input.handle || sessionHandle);
+      const phone = String(input.phone || "").trim();
+
+      if (!handle || !phone) {
+        return { ok: false, error: "Missing required fields: handle, phone." };
+      }
+
+      const result = await ddbDoc.send(new QueryCommand({
+        TableName: TICKETS_TABLE,
+        IndexName: "PhoneIndex",
+        KeyConditionExpression: "phone = :p",
+        FilterExpression: "handle = :h",
+        ExpressionAttributeValues: { ":p": phone, ":h": handle },
+        ScanIndexForward: false,
+        Limit: 5
+      }));
+
+      const tickets = result.Items || [];
+      if (tickets.length === 0) {
+        return { ok: true, tickets: [], message: "No tickets found for this phone number." };
+      }
+
+      const summary = tickets.map(t =>
+        `Ticket ${t.ticketId}: ${t.category} — ${t.status} (${t.priority} priority, created ${t.createdAt.slice(0, 10)})`
+      ).join(". ");
+
+      return {
+        ok: true,
+        tickets: tickets.map(t => ({
+          ticketId: t.ticketId,
+          category: t.category,
+          status: t.status,
+          priority: t.priority,
+          description: t.description,
+          createdAt: t.createdAt
+        })),
+        message: `Found ${tickets.length} ticket(s). ${summary}`
+      };
+    }
+  );
 }
 
 const defaultClient = new NovaSonicBidirectionalStreamClient({ region });
@@ -685,6 +918,7 @@ async function createNewSession(socket, config = {}) {
     handle: config.handle,
     knowledgeBaseId: knowledgeBaseId || undefined,
     socket, // pass socket so tools can emit events (e.g. catalogItems)
+    mode: config.mode, // "onboarding" enables updateOnboardingField tool
   });
   setupSessionHandlers(session, socket);
 
@@ -756,7 +990,7 @@ async function createNewSession(socket, config = {}) {
 app.get("/", (_req, res) => {
   res.status(200).json({
     ok: true,
-    service: "voxa-sonic-service",
+    service: "yandle-sonic-service",
     region,
     modelId,
     socketConnections: io.engine?.clientsCount ?? 0,
@@ -765,7 +999,7 @@ app.get("/", (_req, res) => {
 app.get("/health", (_req, res) => {
   res.json({
     ok: true,
-    service: "voxa-sonic-service",
+    service: "yandle-sonic-service",
     region,
     modelId,
     socketConnections: io.engine?.clientsCount ?? 0,
@@ -935,13 +1169,41 @@ io.on("connection", (socket) => {
       const recorder = socketRecorders.get(socket.id);
       const config = socketConfigs.get(socket.id);
       if (recorder) {
-        // Deduct voice credits: 10 credits per minute
+        // Deduct voice credits: 3 credits per minute
         if (CREDITS_TABLE && ddbDoc && config?.handle) {
           try {
             const durationSeconds = recorder.getDurationSeconds();
             const durationMinutes = Math.ceil(durationSeconds / 60);
-            const creditsToDeduct = durationMinutes * 10;
+            const creditsToDeduct = durationMinutes * 3;
             if (creditsToDeduct > 0) {
+              // Check if credits record exists; create if missing
+              const creditsRes = await ddbDoc.send(new GetCommand({
+                TableName: CREDITS_TABLE,
+                Key: { handle: config.handle },
+              }));
+              if (!creditsRes.Item) {
+                // Initialize credits record for handles that predate CreditsTable
+                try {
+                  await ddbDoc.send(new PutCommand({
+                    TableName: CREDITS_TABLE,
+                    Item: {
+                      handle: config.handle,
+                      credits: 1000,
+                      totalCreditsUsed: 0,
+                      planType: "free",
+                      createdAt: new Date().toISOString(),
+                      updatedAt: new Date().toISOString(),
+                    },
+                    ConditionExpression: "attribute_not_exists(handle)",
+                  }));
+                  console.log(`[stopAudio] Initialized credits record for ${config.handle}`);
+                } catch (initErr) {
+                  if (initErr.name !== "ConditionalCheckFailedException") {
+                    console.error("[stopAudio] credits init error:", initErr);
+                  }
+                }
+              }
+
               await ddbDoc.send(new UpdateCommand({
                 TableName: CREDITS_TABLE,
                 Key: { handle: config.handle },
@@ -952,7 +1214,7 @@ io.on("connection", (socket) => {
               console.log(`[stopAudio] Deducted ${creditsToDeduct} credits (${durationMinutes} min) from ${config.handle}`);
             }
           } catch (e) {
-            console.warn("[stopAudio] credit deduction error:", e.message);
+            console.error("[stopAudio] credit deduction error:", e.name, e.message);
           }
         }
         socketRecorders.delete(socket.id);
@@ -1021,5 +1283,5 @@ io.on("connection", (socket) => {
 });
 
 server.listen(port, "0.0.0.0", () => {
-  console.log(`voxa-sonic-service listening on :${port} (Nova Sonic real-time)`);
+  console.log(`yandle-sonic-service listening on :${port} (Nova Sonic real-time)`);
 });

@@ -95,7 +95,8 @@ const useCaseLabels: Record<string, string> = {
   gaming_cafe: "Gaming Cafe",
   salon: "Salon",
   clinic: "Clinic",
-  retail_shop: "Retail Shop",
+  general: "General",
+  customer_support: "Customer Support",
   unknown: "Unknown",
 };
 
@@ -110,13 +111,13 @@ const bmsNavItems = [
 function getApiBase() {
   return (
     (import.meta as any).env?.VITE_API_BASE_URL ||
-    localStorage.getItem("voxa_api_base") ||
+    localStorage.getItem("yandle_api_base") ||
     "https://6kbd4veax6.execute-api.us-east-1.amazonaws.com"
   );
 }
 
 function getHeaders() {
-  const token = localStorage.getItem("voxa_id_token") || "";
+  const token = localStorage.getItem("yandle_id_token") || "";
   return { authorization: `Bearer ${token}` };
 }
 

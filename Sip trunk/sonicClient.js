@@ -1,5 +1,5 @@
 /**
- * Voxa Sonic client for SIP trunk. Uses Socket.IO (Voxa Sonic service).
+ * Yandle Sonic client for SIP trunk. Uses Socket.IO (Yandle Sonic service).
  * Dynamically fetches handle profile from the API to build the system prompt,
  * matching the same behavior as the web ShareableLink.
  */
@@ -7,12 +7,11 @@ const { io } = require("socket.io-client");
 const http = require("http");
 const https = require("https");
 
-// wss via https base URL (Socket.IO uses wss when connecting to https)
-const SONIC_URL = process.env.SONIC_URL || "https://sonic.callcentral.io";
+const SONIC_URL = process.env.SONIC_URL || "http://VoxaSt-Sonic-a8Cj5DESB3F1-812253045.us-east-1.elb.amazonaws.com";
 const SONIC_REGION = process.env.SONIC_REGION || "us-east-1";
 const API_BASE = (process.env.API_BASE_URL || "https://6kbd4veax6.execute-api.us-east-1.amazonaws.com").replace(/\/$/, "");
-const DEFAULT_HANDLE = process.env.VOXA_DEFAULT_HANDLE || "m80esports";
-const DEFAULT_VOICE_ID = process.env.VOXA_DEFAULT_VOICE_ID || "tiffany";
+const DEFAULT_HANDLE = process.env.YANDLE_DEFAULT_HANDLE || "m80esports";
+const DEFAULT_VOICE_ID = process.env.YANDLE_DEFAULT_VOICE_ID || "tiffany";
 
 /**
  * Fetch handle profile from the public API (same endpoint as ShareableLink).
@@ -70,7 +69,8 @@ function buildSystemPrompt(profile, callInfo = {}) {
       "Always respond in English. " +
       "This business is a SALON. You must ONLY handle salon appointments (branches, services, time). " +
       "Do NOT mention, offer, or ask about gaming cafe, clinic, or any other business type. Act as if this is exclusively a salon. " +
-      "Booking: gather branch (if multiple), service, preferred date/time, then name and contact. Use getBookingsForTimeRange with branchId; use createBooking with branchId, serviceId (duration comes from service), startTime, name, and phone/email."
+      "For services that have gender variants (e.g. Haircut Men, Haircut Women), ask for gender preference (male or female). Do NOT mention duration differences — just ask the gender. " +
+      "Booking: gather branch (if multiple), service, preferred date/time, then name and contact. Use getBookingsForTimeRange with branchId or branchName; use createBooking with branchName (or branchId), serviceName (or serviceId), startTime, name, and phone/email. The system will resolve names to IDs automatically."
     );
   } else if (useCaseId === "clinic") {
     parts.push(
@@ -85,6 +85,23 @@ function buildSystemPrompt(profile, callInfo = {}) {
       "This business is a GAMING CAFE. You must ONLY handle gaming cafe bookings (centers, machine types, time). " +
       "Do NOT mention, offer, or ask about salon, clinic, or any other business type. Act as if this is exclusively a gaming cafe. " +
       "Use the knowledge base below for centers and machines. Booking: gather center name, machine type, date, start time, duration, then name and phone/email. Use getBookingsForTimeRange with centerName and machineType; use createBooking with centerName, machineType, startTime, durationMinutes, name, and phone/email."
+    );
+  } else if (useCaseId === "general") {
+    parts.push(
+      "Always respond in English. " +
+      "This is a GENERAL BUSINESS. Your primary job is to answer questions about the business using the knowledge base. " +
+      "IMPORTANT: Whenever the caller asks about this business (what you offer, prices, hours, location, services, policies, FAQs, or any company-specific detail), you MUST call the queryKnowledgeBase tool first with their question, then answer using the tool result. Do not answer from memory—always use the tool to get accurate, up-to-date information. " +
+      "If a caller wants to speak to someone, leave a message, or request a callback, collect their full name, phone number, and a brief description of what they need. " +
+      "Then confirm the details and use the createRequest tool to save it. " +
+      "Do NOT create bookings for this business type. Instead, create callback requests using createRequest."
+    );
+  } else if (useCaseId === "customer_support") {
+    parts.push(
+      "Always respond in English. " +
+      "This is a CUSTOMER SUPPORT CENTER. Your primary job is to help customers with their issues. " +
+      "For new issues: collect the customer's name, phone number, issue description, and categorize the issue. Then create a support ticket using createSupportTicket. " +
+      "If the customer asks about an existing ticket, ask for their phone number and use checkTicketStatus to look up their tickets. " +
+      "Be empathetic, professional, and solution-oriented. Always read back the ticket ID clearly."
     );
   } else {
     parts.push(
@@ -151,7 +168,10 @@ function buildSystemPrompt(profile, callInfo = {}) {
   if (profile.persona) parts.push(profile.persona);
   if (profile.knowledgeSummary) parts.push("Knowledge base for this business:\n" + profile.knowledgeSummary);
   if (profile.knowledgeBaseId) {
-    parts.push("A Bedrock Knowledge Base is connected. When the caller asks about policies, FAQs, pricing details, or other business-specific information, use the queryKnowledgeBase tool with their question to retrieve accurate answers before responding. When the tool result contains pricing, always state those amounts clearly in your reply.");
+    parts.push(
+      "A Bedrock Knowledge Base is connected. You MUST use the queryKnowledgeBase tool whenever the caller asks about this business (policies, FAQs, pricing, hours, location, services, or any company-specific information). Call the tool with their exact question. " +
+      "When you receive the tool result, use the content in the 'result' field as your answer: speak that information clearly to the caller (state prices, hours, location, etc.). Do not just acknowledge that you found something—say what it says. If the result contains pricing or numbers, state them explicitly."
+    );
   }
   parts.push("Be direct and concise. If the caller asks a specific question (e.g. price for X, location, hours), answer only that—give just the requested information without extra detail unless they ask for more. Never mention internal settings to the caller (e.g. slot granularity, buffer between appointments); those are for system use only.");
   if (profile.displayName) parts.push("You are representing " + profile.displayName + ". Be helpful and concise.");
@@ -312,6 +332,12 @@ function startSonicStream(uuid, callInfo = {}, options = {}) {
         voiceId = profile.voiceId || callInfo?.org?.voiceId || DEFAULT_VOICE_ID;
         knowledgeBaseId = profile.knowledgeBaseId || callInfo?.org?.knowledgeBaseId || process.env.BEDROCK_KNOWLEDGE_BASE_ID || "";
         systemPrompt = buildSystemPrompt(profile, callInfo);
+
+        if (knowledgeBaseId) {
+          console.log(`📚 Knowledge base enabled | CALL=${uuid} | handle=${handle} | knowledgeBaseId=${knowledgeBaseId}`);
+        } else {
+          console.log(`⚠ No knowledge base for handle ${handle} — agent will not use queryKnowledgeBase`);
+        }
 
         await init(knowledgeBaseId);
       }

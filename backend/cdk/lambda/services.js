@@ -69,12 +69,14 @@ exports.handler = async (event) => {
       const durationMinutes = Math.max(1, Math.min(480, Number(body.durationMinutes) || 30));
       const priceCents = body.priceCents != null ? Math.max(0, Number(body.priceCents)) : undefined;
       const useCaseId = body.useCaseId ? String(body.useCaseId).trim() : undefined;
+      const gender = body.gender ? String(body.gender).trim() : undefined;
       const item = {
         handle,
         serviceId,
         name: name || "Service",
         durationMinutes,
         priceCents: priceCents != null ? priceCents : undefined,
+        gender: gender || undefined,
         useCaseId: useCaseId || undefined,
         updatedAt: new Date().toISOString()
       };

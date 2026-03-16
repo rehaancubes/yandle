@@ -61,7 +61,7 @@ const HeroSection = () => {
               <div className="h-3 w-3 rounded-full bg-primary/10" />
             </div>
             <div className="rounded-lg bg-secondary/50 px-4 py-3 font-mono text-sm sm:text-base text-foreground">
-              yandle.io/<span className="text-primary font-semibold">yourname</span>
+              yandle.ai/<span className="text-primary font-semibold">yourname</span>
             </div>
             <div className="flex gap-3 mt-4">
               <button className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-primary/10 border border-primary/20 py-2.5 text-sm font-medium text-primary transition-all hover:bg-primary/20">

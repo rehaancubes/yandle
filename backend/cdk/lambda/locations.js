@@ -62,11 +62,17 @@ exports.handler = async (event) => {
       const locationId = body.locationId && String(body.locationId).trim() ? String(body.locationId).trim() : generateId();
       const name = String(body.name || "").trim();
       const address = body.address != null ? String(body.address).trim() : undefined;
+      const geoLat = body.geoLat != null && Number.isFinite(Number(body.geoLat)) ? Number(body.geoLat) : undefined;
+      const geoLng = body.geoLng != null && Number.isFinite(Number(body.geoLng)) ? Number(body.geoLng) : undefined;
+      const placeId = body.placeId && String(body.placeId).trim() ? String(body.placeId).trim() : undefined;
       const item = {
         handle,
         locationId,
         name: name || "Location",
         address: address || undefined,
+        ...(geoLat != null && { geoLat }),
+        ...(geoLng != null && { geoLng }),
+        ...(placeId && { placeId }),
         updatedAt: new Date().toISOString()
       };
       await ddb.put({ TableName: process.env.LOCATIONS_TABLE, Item: item }).promise();

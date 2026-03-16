@@ -6,6 +6,7 @@ import {
   Share2, Copy, Check, ExternalLink, ChevronLeft, ChevronRight,
   TrendingUp, User, Building2, Calendar, Users, BookOpen, Plus, Trash2, Loader2,
   UserPlus, Play, ChevronDown, ChevronUp, X, PhoneCall, XCircle, Globe2, Upload, Image, Coins,
+  Phone, Ticket, Headset,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,23 +36,22 @@ import AuthButton from "@/components/auth/AuthButton";
 import { getCurrentUserSub, getOnboardingStorageKey, getCurrentUserEmail, startFresh } from "@/lib/auth";
 
 const allNavItems = [
-  { id: "overview", label: "Overview", icon: LayoutDashboard, ownerOnly: false },
-  { id: "bookings", label: "Bookings", icon: Calendar, ownerOnly: false },
-  { id: "customers", label: "Customers", icon: Users, ownerOnly: false },
-  { id: "conversations", label: "Conversations", icon: MessageSquare, ownerOnly: false },
-  { id: "knowledgebase", label: "Knowledge Base", icon: BookOpen, ownerOnly: false },
-  { id: "voice", label: "Voice", icon: Mic, ownerOnly: false },
-  { id: "embed", label: "Embed", icon: LinkIcon, ownerOnly: false },
-  { id: "website", label: "Website", icon: Globe2, ownerOnly: false },
-  { id: "members", label: "Members", icon: UserPlus, ownerOnly: true },
-  { id: "phone", label: "Phone Number", icon: PhoneCall, ownerOnly: false },
-  { id: "credits", label: "Credits", icon: Coins, ownerOnly: false },
-  { id: "settings", label: "Settings", icon: Settings, ownerOnly: false },
+  { id: "overview", label: "Overview", icon: LayoutDashboard, ownerOnly: false, useCases: undefined },
+  { id: "bookings", label: "Bookings", icon: Calendar, ownerOnly: false, useCases: ["gaming_cafe", "salon", "clinic"] as string[] },
+  { id: "requests", label: "Requests", icon: Phone, ownerOnly: false, useCases: ["general"] as string[] },
+  { id: "tickets", label: "Tickets", icon: Ticket, ownerOnly: false, useCases: ["customer_support"] as string[] },
+  { id: "customers", label: "Customers", icon: Users, ownerOnly: false, useCases: undefined },
+  { id: "conversations", label: "Conversations", icon: MessageSquare, ownerOnly: false, useCases: undefined },
+  { id: "knowledgebase", label: "Knowledge Base", icon: BookOpen, ownerOnly: false, useCases: undefined },
+  { id: "voice", label: "Voice", icon: Mic, ownerOnly: false, useCases: undefined },
+  { id: "embed", label: "Embed", icon: LinkIcon, ownerOnly: false, useCases: undefined },
+  { id: "website", label: "Website", icon: Globe2, ownerOnly: false, useCases: undefined },
+  { id: "members", label: "Members", icon: UserPlus, ownerOnly: true, useCases: undefined },
+  { id: "phone", label: "Phone Number", icon: PhoneCall, ownerOnly: false, useCases: undefined },
+  { id: "credits", label: "Credits", icon: Coins, ownerOnly: false, useCases: undefined },
+  { id: "settings", label: "Settings", icon: Settings, ownerOnly: false, useCases: undefined },
 ];
 
-// Mock chart bars
-const chartData = [28, 45, 32, 58, 42, 65, 52, 71, 48, 63, 55, 78];
-const chartLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const IST_TZ = "Asia/Kolkata";
 function formatTimeAgo(iso: string) {
   if (!iso) return "—";
@@ -79,6 +79,38 @@ function formatTimeOnlyIST(iso: string) {
   try {
     const d = new Date(iso);
     return d.toLocaleTimeString("en-IN", { timeZone: IST_TZ, hour: "numeric", minute: "2-digit", hour12: true });
+  } catch {
+    return "—";
+  }
+}
+/** Time in UTC so it matches the slot time the user booked (e.g. "2:00 PM UTC"). */
+function formatTimeUTC(iso: string) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString("en-GB", { timeZone: "UTC", hour: "2-digit", minute: "2-digit", hour12: true }) + " UTC";
+  } catch {
+    return "—";
+  }
+}
+/** Date + time in UTC for booking lists (matches slot time). */
+function formatDateTimeUTC(iso: string) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    const dateStr = d.toLocaleDateString("en-GB", { timeZone: "UTC", day: "numeric", month: "short", year: "numeric" });
+    const timeStr = d.toLocaleTimeString("en-GB", { timeZone: "UTC", hour: "2-digit", minute: "2-digit", hour12: true });
+    return `${dateStr}, ${timeStr} UTC`;
+  } catch {
+    return iso;
+  }
+}
+/** Time only in UTC for grid column headers (matches slot time). */
+function formatTimeOnlyUTC(iso: string) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString("en-GB", { timeZone: "UTC", hour: "2-digit", minute: "2-digit", hour12: true });
   } catch {
     return "—";
   }
@@ -124,6 +156,136 @@ const bookingStatusColors: Record<string, string> = {
   cancelled: "bg-muted text-muted-foreground",
 };
 
+type VirtualStation = { centerId: string; centerName: string; machineType: string; machineName: string; slotIndex: number; displayLabel: string };
+
+/** Build virtual stations from gaming centers (one per machine slot). */
+function buildVirtualStations(centers: any[]): VirtualStation[] {
+  const out: VirtualStation[] = [];
+  for (const c of centers || []) {
+    const machines = Array.isArray(c.machines) ? c.machines : [];
+    for (const m of machines) {
+      const type = (m.type || m.name || "PC").trim() || "PC";
+      const name = (m.name || m.type || "Machine").trim() || "Machine";
+      const count = Math.max(1, Number(m.count) || 1);
+      for (let i = 0; i < count; i++) {
+        out.push({
+          centerId: c.centerId || c.id || "",
+          centerName: c.name || "Center",
+          machineType: type,
+          machineName: name,
+          slotIndex: i,
+          displayLabel: count > 1 ? `${type}-${i + 1}` : type,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/** Group virtual stations by branch/center (order follows centers array). */
+function groupStationsByCenter(centers: any[], stations: VirtualStation[]): { centerName: string; stations: VirtualStation[] }[] {
+  const byCenter = new Map<string, VirtualStation[]>();
+  for (const s of stations) byCenter.set(s.centerName, [...(byCenter.get(s.centerName) || []), s]);
+  return (centers || [])
+    .map((c) => ({ centerName: c.name || "Center", stations: byCenter.get(c.name || "Center") || [] }))
+    .filter((g) => g.stations.length > 0);
+}
+
+function GamingAvailabilityGrid({
+  stations,
+  bookings,
+  gridDate,
+  formatTime,
+  onSlotClick,
+  openHour = 9,
+  closeHour = 18,
+  slotGranularityMinutes = 60,
+}: {
+  stations: { centerId: string; centerName: string; machineType: string; machineName: string; slotIndex: number; displayLabel: string }[];
+  bookings: any[];
+  gridDate: string;
+  formatTime: (iso: string) => string;
+  onSlotClick: (station: typeof stations[0], slotStartIso: string) => void;
+  openHour?: number;
+  closeHour?: number;
+  slotGranularityMinutes?: number;
+}) {
+  const [year, month, day] = gridDate.split("-").map(Number);
+  const slotStarts: string[] = [];
+  const totalMinutes = (closeHour - openHour) * 60;
+  const numSlots = Math.max(1, Math.floor(totalMinutes / slotGranularityMinutes));
+  for (let i = 0; i < numSlots; i++) {
+    const mins = openHour * 60 + i * slotGranularityMinutes;
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    slotStarts.push(new Date(Date.UTC(year, month - 1, day, h, m, 0)).toISOString());
+  }
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border bg-card/30">
+      <table className="w-full border-collapse text-xs">
+        <thead>
+          <tr className="border-b border-border bg-muted/30">
+            <th className="text-left p-2 font-semibold text-primary w-28">Station</th>
+            {slotStarts.map((s) => (
+              <th key={s} className="p-1 w-14 text-center text-muted-foreground">{formatTime(s)}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {stations.map((st, idx) => {
+            const rowBookings = bookings.filter((b: any) =>
+              (b.centerName || "").toLowerCase() === st.centerName.toLowerCase() &&
+              (b.machineType || "").toLowerCase() === st.machineType.toLowerCase()
+            ).sort((a: any, b: any) => {
+              const byTime = (a.startTime || "").localeCompare(b.startTime || "");
+              if (byTime !== 0) return byTime;
+              return (a.bookingId || "").localeCompare(b.bookingId || "");
+            });
+            return (
+              <tr key={st.centerId + st.slotIndex + idx} className="border-b border-border/50 hover:bg-muted/20">
+                <td className="p-2 font-medium">{st.displayLabel}</td>
+                {slotStarts.map((slotStart) => {
+                  const slotEnd = new Date(new Date(slotStart).getTime() + slotGranularityMinutes * 60000).toISOString();
+                  const overlapping = rowBookings.filter((b: any) => {
+                    const bStart = new Date(b.startTime);
+                    const bEnd = new Date(bStart.getTime() + (b.durationMinutes || 60) * 60000);
+                    const s = new Date(slotStart);
+                    const e = new Date(slotEnd);
+                    return bStart < e && bEnd > s;
+                  }).sort((a: any, b: any) => {
+                    const byTime = (a.startTime || "").localeCompare(b.startTime || "");
+                    if (byTime !== 0) return byTime;
+                    return (a.bookingId || "").localeCompare(b.bookingId || "");
+                  });
+                  // Row slotIndex shows the Nth overlapping booking (PC-1 = 0th, PC-2 = 1st, …)
+                  const booking = overlapping[st.slotIndex] ?? null;
+                  const isBooked = !!booking;
+                  return (
+                    <td key={slotStart} className="p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => !isBooked && onSlotClick(st, slotStart)}
+                        disabled={isBooked}
+                        className={`w-12 h-8 rounded block w-full text-center text-[10px] font-medium transition-colors ${
+                          isBooked
+                            ? "bg-primary/30 text-primary cursor-default"
+                            : "bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary"
+                        }`}
+                      >
+                        {booking ? (booking.name || booking.email || "—").split(" ")[0] : "—"}
+                      </button>
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 const Dashboard = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -131,7 +293,7 @@ const Dashboard = () => {
   const [collapsed, setCollapsed] = useState(false);
   const [copied, setCopied] = useState(false);
   const [useCase, setUseCase] = useState<UseCase | null>(null);
-  const [voxaHandle, setVoxaHandle] = useState("");
+  const [yandleHandle, setYandleHandle] = useState("");
   const [myHandles, setMyHandles] = useState<any[]>([]);
   const [handlePhoneNumber, setHandlePhoneNumber] = useState("");
   const [formData, setFormData] = useState<Record<string, any>>({});
@@ -141,7 +303,7 @@ const Dashboard = () => {
   const [conversations, setConversations] = useState<any[]>([]);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [onboardingCheckDone, setOnboardingCheckDone] = useState(false);
-  const [slotConfig, setSlotConfig] = useState<{ slotGranularityMinutes?: number; bufferBetweenMinutes?: number }>({});
+  const [slotConfig, setSlotConfig] = useState<{ slotGranularityMinutes?: number; bufferBetweenMinutes?: number; openHour?: number; closeHour?: number }>({});
   const [branchesList, setBranchesList] = useState<any[]>([]);
   const [servicesList, setServicesList] = useState<any[]>([]);
   const [doctorsList, setDoctorsList] = useState<any[]>([]);
@@ -202,10 +364,25 @@ const Dashboard = () => {
   const [walkInSubmitting, setWalkInSubmitting] = useState(false);
   const [cancellingBooking, setCancellingBooking] = useState<string | null>(null);
   const [expandedBookingId, setExpandedBookingId] = useState<string | null>(null);
+  // Gaming cafe bookings: sub-tabs (dashboard | reservations | hardware) and grid date
+  const [gamingBookingsSubTab, setGamingBookingsSubTab] = useState<"dashboard" | "reservations" | "hardware">("dashboard");
+  const [gamingSelectedCenterName, setGamingSelectedCenterName] = useState<string>("");
+  const [gridDate, setGridDate] = useState(() => {
+    const d = new Date();
+    return d.toLocaleDateString("en-CA", { timeZone: "UTC" });
+  });
+  const [gridDateBookings, setGridDateBookings] = useState<any[]>([]);
+  const [gridDateBookingsLoading, setGridDateBookingsLoading] = useState(false);
 
   // Owner/member
   const [isOwner, setIsOwner] = useState(false);
-  const navItems = allNavItems.filter((n) => !n.ownerOnly || isOwner);
+  const currentUseCaseId = useCase?.id;
+  const navItems = allNavItems.filter((n) => {
+    if (n.ownerOnly && !isOwner) return false;
+    if (n.useCases && currentUseCaseId && !n.useCases.includes(currentUseCaseId)) return false;
+    if (n.useCases && !currentUseCaseId) return false;
+    return true;
+  });
 
   // Members tab
   const [membersList, setMembersList] = useState<any[]>([]);
@@ -234,6 +411,9 @@ const Dashboard = () => {
   const [websiteConfigLoaded, setWebsiteConfigLoaded] = useState(false);
   const [websiteSaving, setWebsiteSaving] = useState(false);
   const [websiteImageUploading, setWebsiteImageUploading] = useState(false);
+  const [websiteChatMessages, setWebsiteChatMessages] = useState<Array<{ role: "user" | "ai"; text: string; changes?: Record<string, any> | null }>>([]);
+  const [websiteChatInput, setWebsiteChatInput] = useState("");
+  const [websiteChatLoading, setWebsiteChatLoading] = useState(false);
 
   // Color theme → CSS overrides
   const themeHslMap: Record<string, string> = {
@@ -259,6 +439,15 @@ const Dashboard = () => {
   const [assigningPhone, setAssigningPhone] = useState<string | null>(null);
   const [releasingPhone, setReleasingPhone] = useState(false);
 
+  // Requests tab (general business type)
+  const [requestsList, setRequestsList] = useState<any[]>([]);
+  const [requestsLoading, setRequestsLoading] = useState(false);
+
+  // Tickets tab (customer_support business type)
+  const [ticketsList, setTicketsList] = useState<any[]>([]);
+  const [ticketsLoading, setTicketsLoading] = useState(false);
+  const [updatingTicketId, setUpdatingTicketId] = useState<string | null>(null);
+
   // Conversations: expanded row & full session objects
   const [expandedConvId, setExpandedConvId] = useState<string | null>(null);
 
@@ -268,7 +457,7 @@ const Dashboard = () => {
     if (!apiBase) return [];
     try {
       const resp = await fetch(`${apiBase}/handles`, {
-        headers: { authorization: `Bearer ${localStorage.getItem("voxa_id_token") || ""}` },
+        headers: { authorization: `Bearer ${localStorage.getItem("yandle_id_token") || ""}` },
       });
       if (!resp.ok) return [];
       const json = await resp.json();
@@ -287,7 +476,7 @@ const Dashboard = () => {
 
     // Backward compatibility for data saved before per-user storage keys.
     if (!raw) {
-      const legacyRaw = localStorage.getItem("voxa_onboarding");
+      const legacyRaw = localStorage.getItem("yandle_onboarding");
       if (legacyRaw) {
         localStorage.setItem(storageKey, legacyRaw);
         raw = legacyRaw;
@@ -297,16 +486,16 @@ const Dashboard = () => {
     if (raw) {
       try {
         const data = JSON.parse(raw);
-        if (data?.voxaHandle) {
+        if (data?.yandleHandle) {
           const loadedUseCase = data.useCaseId ? getUseCaseById(data.useCaseId) || null : null;
           if (loadedUseCase) setUseCase(loadedUseCase);
-          setVoxaHandle(data.voxaHandle);
+          setYandleHandle(data.yandleHandle);
           if (data.formData && typeof data.formData === "object") setFormData(data.formData);
           if (typeof data.displayName === "string") setDisplayName(data.displayName);
           setOnboardingCheckDone(true);
           // Even when restoring from localStorage, fetch all handles so the switcher is populated
           fetchAllHandles().then((handles) => {
-            const current = handles.find((h: any) => h.handle === data.voxaHandle);
+            const current = handles.find((h: any) => h.handle === data.yandleHandle);
             if (current?.phoneNumber) setHandlePhoneNumber(current.phoneNumber);
           });
           return;
@@ -339,13 +528,13 @@ const Dashboard = () => {
         }
         const restored = {
           ownerSub: sub,
-          voxaHandle: handle,
+          yandleHandle: handle,
           displayName: first.displayName || handle,
           useCaseId: first.useCaseId,
           formData: {},
         };
         localStorage.setItem(storageKey, JSON.stringify(restored));
-        setVoxaHandle(handle);
+        setYandleHandle(handle);
         if (typeof first.displayName === "string") setDisplayName(first.displayName);
         if (first.useCaseId) {
           const loadedUseCase = getUseCaseById(first.useCaseId) || null;
@@ -363,16 +552,16 @@ const Dashboard = () => {
 
   // Load live bookings for current handle (all use cases)
   useEffect(() => {
-    if (!apiBase || !voxaHandle) return;
+    if (!apiBase || !yandleHandle) return;
     const controller = new AbortController();
 
     (async () => {
       try {
         const resp = await fetch(
-          `${apiBase}/bookings?handle=${encodeURIComponent(voxaHandle)}`,
+          `${apiBase}/bookings?handle=${encodeURIComponent(yandleHandle)}`,
           {
             headers: {
-              authorization: `Bearer ${localStorage.getItem("voxa_id_token") || ""}`,
+              authorization: `Bearer ${localStorage.getItem("yandle_id_token") || ""}`,
             },
             signal: controller.signal,
           }
@@ -386,35 +575,88 @@ const Dashboard = () => {
     })();
 
     return () => controller.abort();
-  }, [apiBase, voxaHandle]);
+  }, [apiBase, yandleHandle]);
 
   // Load branches/services/doctors/locations/centers when on Bookings tab so Add booking dialog has options
   useEffect(() => {
-    if (!apiBase || !voxaHandle || activeNav !== "bookings") return;
-    const token = localStorage.getItem("voxa_id_token") || "";
+    if (!apiBase || !yandleHandle || activeNav !== "bookings") return;
+    const token = localStorage.getItem("yandle_id_token") || "";
     if (useCase?.id === "salon") {
       Promise.all([
-        fetch(`${apiBase}/branches?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setBranchesList(Array.isArray(d?.branches) ? d.branches : [])),
-        fetch(`${apiBase}/services?handle=${encodeURIComponent(voxaHandle)}&useCaseId=salon`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setServicesList(Array.isArray(d?.services) ? d.services : [])),
+        fetch(`${apiBase}/branches?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setBranchesList(Array.isArray(d?.branches) ? d.branches : [])),
+        fetch(`${apiBase}/services?handle=${encodeURIComponent(yandleHandle)}&useCaseId=salon`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setServicesList(Array.isArray(d?.services) ? d.services : [])),
       ]).catch(() => {});
     } else if (useCase?.id === "clinic") {
       Promise.all([
-        fetch(`${apiBase}/doctors?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setDoctorsList(Array.isArray(d?.doctors) ? d.doctors : [])),
-        fetch(`${apiBase}/locations?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setLocationsList(Array.isArray(d?.locations) ? d.locations : [])),
-        fetch(`${apiBase}/services?handle=${encodeURIComponent(voxaHandle)}&useCaseId=clinic`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setServicesList(Array.isArray(d?.services) ? d.services : [])),
+        fetch(`${apiBase}/doctors?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setDoctorsList(Array.isArray(d?.doctors) ? d.doctors : [])),
+        fetch(`${apiBase}/locations?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setLocationsList(Array.isArray(d?.locations) ? d.locations : [])),
+        fetch(`${apiBase}/services?handle=${encodeURIComponent(yandleHandle)}&useCaseId=clinic`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setServicesList(Array.isArray(d?.services) ? d.services : [])),
       ]).catch(() => {});
     } else if (useCase?.id === "gaming_cafe") {
-      fetch(`${apiBase}/centers?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } })
+      fetch(`${apiBase}/centers?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } })
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => setCentersList(Array.isArray(d?.centers) ? d.centers : []))
         .catch(() => setCentersList([]));
     }
-  }, [apiBase, voxaHandle, activeNav, useCase?.id]);
+  }, [apiBase, yandleHandle, activeNav, useCase?.id]);
+
+  // Default gaming branch to first center when centers load
+  useEffect(() => {
+    if (useCase?.id !== "gaming_cafe" || !centersList?.length) return;
+    if (!gamingSelectedCenterName && centersList[0]?.name) {
+      setGamingSelectedCenterName(centersList[0].name);
+    }
+  }, [useCase?.id, centersList, gamingSelectedCenterName]);
+
+  // Load bookings for selected date including today (gaming cafe: so grid always has date-scoped list and multiple per slot show correctly)
+  useEffect(() => {
+    if (!apiBase || !yandleHandle || useCase?.id !== "gaming_cafe" || activeNav !== "bookings") return;
+    setGridDateBookingsLoading(true);
+    const [y, m, d] = gridDate.split("-").map(Number);
+    const start = new Date(Date.UTC(y, m - 1, d, 0, 0, 0)).toISOString();
+    const end = new Date(Date.UTC(y, m - 1, d + 1, 0, 0, 0)).toISOString();
+    const token = localStorage.getItem("yandle_id_token") || "";
+    fetch(`${apiBase}/bookings?handle=${encodeURIComponent(yandleHandle)}&fromTime=${encodeURIComponent(start)}&toTime=${encodeURIComponent(end)}&limit=100`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => setGridDateBookings(Array.isArray(json?.bookings) ? json.bookings : []))
+      .catch(() => setGridDateBookings([]))
+      .finally(() => setGridDateBookingsLoading(false));
+  }, [apiBase, yandleHandle, useCase?.id, activeNav, gridDate]);
+
+  // Load requests for general business type
+  useEffect(() => {
+    if (!apiBase || !yandleHandle || activeNav !== "requests" || useCase?.id !== "general") return;
+    setRequestsLoading(true);
+    const token = localStorage.getItem("yandle_id_token") || "";
+    fetch(`${apiBase}/requests?handle=${encodeURIComponent(yandleHandle)}`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => setRequestsList(Array.isArray(data?.items) ? data.items : []))
+      .catch(() => setRequestsList([]))
+      .finally(() => setRequestsLoading(false));
+  }, [apiBase, yandleHandle, activeNav, useCase?.id]);
+
+  // Load tickets for customer_support business type
+  useEffect(() => {
+    if (!apiBase || !yandleHandle || activeNav !== "tickets" || useCase?.id !== "customer_support") return;
+    setTicketsLoading(true);
+    const token = localStorage.getItem("yandle_id_token") || "";
+    fetch(`${apiBase}/tickets?handle=${encodeURIComponent(yandleHandle)}`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => setTicketsList(Array.isArray(data?.items) ? data.items : []))
+      .catch(() => setTicketsList([]))
+      .finally(() => setTicketsLoading(false));
+  }, [apiBase, yandleHandle, activeNav, useCase?.id]);
 
   useEffect(() => {
-    if (!apiBase || !voxaHandle || activeNav !== "conversations") return;
-    const token = localStorage.getItem("voxa_id_token") || "";
-    fetch(`${apiBase}/public/${voxaHandle}/conversations?limit=50`, {
+    if (!apiBase || !yandleHandle || (activeNav !== "conversations" && activeNav !== "overview")) return;
+    const token = localStorage.getItem("yandle_id_token") || "";
+    fetch(`${apiBase}/public/${yandleHandle}/conversations?limit=50`, {
       headers: { authorization: `Bearer ${token}` },
     })
       .then((r) => (r.ok ? r.json() : null))
@@ -436,89 +678,91 @@ const Dashboard = () => {
         );
       })
       .catch(() => setConversations([]));
-  }, [apiBase, voxaHandle, activeNav]);
+  }, [apiBase, yandleHandle, activeNav]);
 
   // Check isOwner when handle is known; also refresh handle list & phone number
   useEffect(() => {
-    if (!apiBase || !voxaHandle) return;
-    const token = localStorage.getItem("voxa_id_token") || "";
+    if (!apiBase || !yandleHandle) return;
+    const token = localStorage.getItem("yandle_id_token") || "";
     fetch(`${apiBase}/handles`, { headers: { authorization: `Bearer ${token}` } })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         const handles = Array.isArray(data?.handles) ? data.handles : [];
         setMyHandles(handles);
-        const h = handles.find((x: any) => x.handle === voxaHandle);
+        const h = handles.find((x: any) => x.handle === yandleHandle);
         setIsOwner(h?.role === "owner" || !h?.role); // treat no role as owner (legacy)
         if (h?.phoneNumber) setHandlePhoneNumber(h.phoneNumber);
       })
       .catch(() => {});
-  }, [apiBase, voxaHandle]);
+  }, [apiBase, yandleHandle]);
 
   // Load persona when on voice tab
   useEffect(() => {
-    if (!apiBase || !voxaHandle || activeNav !== "voice" || personaLoaded) return;
-    const token = localStorage.getItem("voxa_id_token") || "";
-    fetch(`${apiBase}/handles?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } })
+    if (!apiBase || !yandleHandle || activeNav !== "voice" || personaLoaded) return;
+    const token = localStorage.getItem("yandle_id_token") || "";
+    fetch(`${apiBase}/handles?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (data?.profile?.persona) setPersona(data.profile.persona);
         setPersonaLoaded(true);
       })
       .catch(() => setPersonaLoaded(true));
-  }, [apiBase, voxaHandle, activeNav, personaLoaded]);
+  }, [apiBase, yandleHandle, activeNav, personaLoaded]);
 
   // Load members when on members tab
   useEffect(() => {
-    if (!apiBase || !voxaHandle || activeNav !== "members") return;
-    const token = localStorage.getItem("voxa_id_token") || "";
-    fetch(`${apiBase}/members?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } })
+    if (!apiBase || !yandleHandle || activeNav !== "members") return;
+    const token = localStorage.getItem("yandle_id_token") || "";
+    fetch(`${apiBase}/members?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => setMembersList(Array.isArray(data?.members) ? data.members : []))
       .catch(() => {});
-  }, [apiBase, voxaHandle, activeNav]);
+  }, [apiBase, yandleHandle, activeNav]);
 
   useEffect(() => {
-    if (!apiBase || !voxaHandle || activeNav !== "customers") return;
-    const token = localStorage.getItem("voxa_id_token") || "";
-    fetch(`${apiBase}/customers?handle=${encodeURIComponent(voxaHandle)}`, {
+    if (!apiBase || !yandleHandle || activeNav !== "customers") return;
+    const token = localStorage.getItem("yandle_id_token") || "";
+    fetch(`${apiBase}/customers?handle=${encodeURIComponent(yandleHandle)}`, {
       headers: { authorization: `Bearer ${token}` },
     })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => setCustomers(Array.isArray(data?.customers) ? data.customers : []))
       .catch(() => setCustomers([]));
-  }, [apiBase, voxaHandle, activeNav]);
+  }, [apiBase, yandleHandle, activeNav]);
 
   useEffect(() => {
-    if (!apiBase || !voxaHandle || activeNav !== "settings") return;
-    const token = localStorage.getItem("voxa_id_token") || "";
-    fetch(`${apiBase}/config/slots?handle=${encodeURIComponent(voxaHandle)}`, {
+    if (!apiBase || !yandleHandle || (activeNav !== "settings" && activeNav !== "bookings")) return;
+    const token = localStorage.getItem("yandle_id_token") || "";
+    fetch(`${apiBase}/config/slots?handle=${encodeURIComponent(yandleHandle)}`, {
       headers: { authorization: `Bearer ${token}` },
     })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
-        if (data && (data.slotGranularityMinutes != null || data.bufferBetweenMinutes != null)) {
+        if (data && (data.slotGranularityMinutes != null || data.bufferBetweenMinutes != null || data.openHour != null || data.closeHour != null)) {
           setSlotConfig({
             slotGranularityMinutes: data.slotGranularityMinutes ?? 15,
             bufferBetweenMinutes: data.bufferBetweenMinutes ?? 0,
+            openHour: data.openHour ?? 9,
+            closeHour: data.closeHour ?? 18,
           });
         }
       })
       .catch(() => {});
-  }, [apiBase, voxaHandle, activeNav]);
+  }, [apiBase, yandleHandle, activeNav]);
 
   useEffect(() => {
-    if (!apiBase || !voxaHandle || activeNav !== "settings") return;
-    const token = localStorage.getItem("voxa_id_token") || "";
+    if (!apiBase || !yandleHandle || activeNav !== "settings") return;
+    const token = localStorage.getItem("yandle_id_token") || "";
     if (useCase?.id === "salon") {
       Promise.all([
-        fetch(`${apiBase}/branches?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setBranchesList(Array.isArray(d?.branches) ? d.branches : [])),
-        fetch(`${apiBase}/services?handle=${encodeURIComponent(voxaHandle)}&useCaseId=salon`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setServicesList(Array.isArray(d?.services) ? d.services : [])),
+        fetch(`${apiBase}/branches?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setBranchesList(Array.isArray(d?.branches) ? d.branches : [])),
+        fetch(`${apiBase}/services?handle=${encodeURIComponent(yandleHandle)}&useCaseId=salon`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setServicesList(Array.isArray(d?.services) ? d.services : [])),
       ]).catch(() => {});
     } else if (useCase?.id === "clinic") {
       Promise.all([
-        fetch(`${apiBase}/doctors?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setDoctorsList(Array.isArray(d?.doctors) ? d.doctors : [])),
-        fetch(`${apiBase}/locations?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setLocationsList(Array.isArray(d?.locations) ? d.locations : [])),
-        fetch(`${apiBase}/services?handle=${encodeURIComponent(voxaHandle)}&useCaseId=clinic`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setServicesList(Array.isArray(d?.services) ? d.services : [])),
+        fetch(`${apiBase}/doctors?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setDoctorsList(Array.isArray(d?.doctors) ? d.doctors : [])),
+        fetch(`${apiBase}/locations?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setLocationsList(Array.isArray(d?.locations) ? d.locations : [])),
+        fetch(`${apiBase}/services?handle=${encodeURIComponent(yandleHandle)}&useCaseId=clinic`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setServicesList(Array.isArray(d?.services) ? d.services : [])),
       ]).catch(() => {});
     } else {
       setBranchesList([]);
@@ -526,18 +770,18 @@ const Dashboard = () => {
       setDoctorsList([]);
       setLocationsList([]);
     }
-  }, [apiBase, voxaHandle, activeNav, useCase?.id]);
+  }, [apiBase, yandleHandle, activeNav, useCase?.id]);
 
   // Knowledge Base tab: load profile (custom text), centers (gaming), branches/services/doctors/locations/catalog/files by use case
   useEffect(() => {
-    if (!apiBase || !voxaHandle || activeNav !== "knowledgebase") return;
-    const token = localStorage.getItem("voxa_id_token") || "";
+    if (!apiBase || !yandleHandle || activeNav !== "knowledgebase") return;
+    const token = localStorage.getItem("yandle_id_token") || "";
     setKbProfileLoaded(false);
     setKbPreviewLoading(true);
     setKbPreviewText("");
     setKbFilesLoading(true);
     Promise.all([
-      fetch(`${apiBase}/handles?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } })
+      fetch(`${apiBase}/handles?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } })
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           if (d?.profile) {
@@ -546,42 +790,42 @@ const Dashboard = () => {
           setKbProfileLoaded(true);
         })
         .catch(() => setKbProfileLoaded(true)),
-      fetch(`${apiBase}/centers?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } })
+      fetch(`${apiBase}/centers?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } })
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => setCentersList(Array.isArray(d?.centers) ? d.centers : []))
         .catch(() => setCentersList([])),
       useCase?.id === "salon"
         ? Promise.all([
-            fetch(`${apiBase}/branches?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setBranchesList(Array.isArray(d?.branches) ? d.branches : [])),
-            fetch(`${apiBase}/services?handle=${encodeURIComponent(voxaHandle)}&useCaseId=salon`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setServicesList(Array.isArray(d?.services) ? d.services : [])),
+            fetch(`${apiBase}/branches?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setBranchesList(Array.isArray(d?.branches) ? d.branches : [])),
+            fetch(`${apiBase}/services?handle=${encodeURIComponent(yandleHandle)}&useCaseId=salon`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setServicesList(Array.isArray(d?.services) ? d.services : [])),
           ])
         : useCase?.id === "clinic"
           ? Promise.all([
-              fetch(`${apiBase}/doctors?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setDoctorsList(Array.isArray(d?.doctors) ? d.doctors : [])),
-              fetch(`${apiBase}/locations?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setLocationsList(Array.isArray(d?.locations) ? d.locations : [])),
-              fetch(`${apiBase}/services?handle=${encodeURIComponent(voxaHandle)}&useCaseId=clinic`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setServicesList(Array.isArray(d?.services) ? d.services : [])),
+              fetch(`${apiBase}/doctors?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setDoctorsList(Array.isArray(d?.doctors) ? d.doctors : [])),
+              fetch(`${apiBase}/locations?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setLocationsList(Array.isArray(d?.locations) ? d.locations : [])),
+              fetch(`${apiBase}/services?handle=${encodeURIComponent(yandleHandle)}&useCaseId=clinic`, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)).then((d) => setServicesList(Array.isArray(d?.services) ? d.services : [])),
             ])
           : Promise.resolve(),
       // Load the AI knowledge preview
-      fetch(`${apiBase}/knowledge/preview?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } })
+      fetch(`${apiBase}/knowledge/preview?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } })
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => { if (d?.content) setKbPreviewText(d.content); })
         .catch(() => {})
         .finally(() => setKbPreviewLoading(false)),
       // Load uploaded files
-      fetch(`${apiBase}/knowledge/files?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } })
+      fetch(`${apiBase}/knowledge/files?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } })
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => setKbFiles(Array.isArray(d?.files) ? d.files : []))
         .catch(() => setKbFiles([]))
         .finally(() => setKbFilesLoading(false)),
     ]).catch(() => { setKbPreviewLoading(false); setKbFilesLoading(false); });
-  }, [apiBase, voxaHandle, activeNav, useCase?.id]);
+  }, [apiBase, yandleHandle, activeNav, useCase?.id]);
 
   // Website tab: load config
   useEffect(() => {
-    if (!apiBase || !voxaHandle || activeNav !== "website" || websiteConfigLoaded) return;
-    const token = localStorage.getItem("voxa_id_token") || "";
-    fetch(`${apiBase}/website/config?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } })
+    if (!apiBase || !yandleHandle || activeNav !== "website" || websiteConfigLoaded) return;
+    const token = localStorage.getItem("yandle_id_token") || "";
+    fetch(`${apiBase}/website/config?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (data?.config) {
@@ -595,13 +839,13 @@ const Dashboard = () => {
         setWebsiteConfigLoaded(true);
       })
       .catch(() => setWebsiteConfigLoaded(true));
-  }, [apiBase, voxaHandle, activeNav, websiteConfigLoaded]);
+  }, [apiBase, yandleHandle, activeNav, websiteConfigLoaded]);
 
   // Load credits on overview tab
   useEffect(() => {
-    if (!apiBase || !voxaHandle || activeNav !== "overview") return;
-    const token = localStorage.getItem("voxa_id_token") || "";
-    fetch(`${apiBase}/credits?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } })
+    if (!apiBase || !yandleHandle || activeNav !== "overview") return;
+    const token = localStorage.getItem("yandle_id_token") || "";
+    fetch(`${apiBase}/credits?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (data) {
@@ -610,39 +854,39 @@ const Dashboard = () => {
         }
       })
       .catch(() => {});
-  }, [apiBase, voxaHandle, activeNav]);
+  }, [apiBase, yandleHandle, activeNav]);
 
   // Load credits on credits tab
   useEffect(() => {
-    if (!apiBase || !voxaHandle || activeNav !== "credits") return;
-    const token = localStorage.getItem("voxa_id_token") || "";
-    fetch(`${apiBase}/credits?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } })
+    if (!apiBase || !yandleHandle || activeNav !== "credits") return;
+    const token = localStorage.getItem("yandle_id_token") || "";
+    fetch(`${apiBase}/credits?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => { if (data) { setCreditsBalance(data.credits ?? null); setCreditsTotalUsed(data.totalCreditsUsed ?? null); setFormData((p: any) => ({ ...p, planType: data.planType || "none" })); } })
       .catch(() => {});
-  }, [apiBase, voxaHandle, activeNav]);
+  }, [apiBase, yandleHandle, activeNav]);
 
   // Load available phone numbers on phone tab
   useEffect(() => {
-    if (!apiBase || !voxaHandle || activeNav !== "phone") return;
+    if (!apiBase || !yandleHandle || activeNav !== "phone") return;
     if (handlePhoneNumber) return; // already has a number
     setPhoneLoading(true);
-    const token = localStorage.getItem("voxa_id_token") || "";
+    const token = localStorage.getItem("yandle_id_token") || "";
     fetch(`${apiBase}/phone-numbers/available`, { headers: { authorization: `Bearer ${token}` } })
       .then((r) => (r.ok ? r.json() : { numbers: [] }))
       .then((data) => setAvailableNumbers(data.numbers || []))
       .catch(() => {})
       .finally(() => setPhoneLoading(false));
-  }, [apiBase, voxaHandle, activeNav, handlePhoneNumber]);
+  }, [apiBase, yandleHandle, activeNav, handlePhoneNumber]);
 
   const handleAssignPhone = async (phoneNumber: string) => {
     setAssigningPhone(phoneNumber);
     try {
-      const token = localStorage.getItem("voxa_id_token") || "";
+      const token = localStorage.getItem("yandle_id_token") || "";
       const res = await fetch(`${apiBase}/phone-numbers/assign`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-        body: JSON.stringify({ handle: voxaHandle, phoneNumber })
+        body: JSON.stringify({ handle: yandleHandle, phoneNumber })
       });
       const data = await res.json();
       if (data.ok) {
@@ -661,11 +905,11 @@ const Dashboard = () => {
     if (!handlePhoneNumber) return;
     setReleasingPhone(true);
     try {
-      const token = localStorage.getItem("voxa_id_token") || "";
+      const token = localStorage.getItem("yandle_id_token") || "";
       const res = await fetch(`${apiBase}/phone-numbers/release`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-        body: JSON.stringify({ handle: voxaHandle, phoneNumber: handlePhoneNumber })
+        body: JSON.stringify({ handle: yandleHandle, phoneNumber: handlePhoneNumber })
       });
       const data = await res.json();
       if (data.ok) {
@@ -680,12 +924,12 @@ const Dashboard = () => {
 
   /** Switch the active handle — updates state, clears stale data, and persists to localStorage. */
   const switchHandle = (handle: any) => {
-    if (!handle?.handle || handle.handle === voxaHandle) return;
+    if (!handle?.handle || handle.handle === yandleHandle) return;
     const sub = getCurrentUserSub();
     const storageKey = getOnboardingStorageKey(sub);
 
     // Update primary identifiers
-    setVoxaHandle(handle.handle);
+    setYandleHandle(handle.handle);
     setDisplayName(handle.displayName || handle.handle);
     setHandlePhoneNumber(handle.phoneNumber || "");
 
@@ -733,7 +977,7 @@ const Dashboard = () => {
     // Persist the selected handle to localStorage
     const stored = {
       ownerSub: sub,
-      voxaHandle: handle.handle,
+      yandleHandle: handle.handle,
       displayName: handle.displayName || handle.handle,
       useCaseId: handle.useCaseId,
       formData: {},
@@ -742,19 +986,19 @@ const Dashboard = () => {
   };
 
   const widgets = useCase?.dashboardWidgets || [];
-  const voxaLink = voxaHandle ? `yandle.io/${voxaHandle}` : "yandle.io/yourname";
-  const shareablePath = voxaHandle ? `/shareable/${voxaHandle}` : "/onboarding";
+  const yandleLink = yandleHandle ? `callcentral.io/${yandleHandle}` : "callcentral.io/yourname";
+  const shareablePath = yandleHandle ? `/shareable/${yandleHandle}` : "/onboarding";
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(`https://${voxaLink}`);
+    navigator.clipboard.writeText(`https://${yandleLink}`);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   const saveSettings = async () => {
-    const normalizedHandle = voxaHandle.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
+    const normalizedHandle = yandleHandle.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
     if (!normalizedHandle) {
-      toast({ title: "Handle required", description: "Your Yandle handle cannot be empty." });
+      toast({ title: "Handle required", description: "Your YANDLE handle cannot be empty." });
       return;
     }
     const sub = getCurrentUserSub();
@@ -764,11 +1008,11 @@ const Dashboard = () => {
       ownerSub: sub,
       useCaseId: useCase?.id,
       formData,
-      voxaHandle: normalizedHandle,
+      yandleHandle: normalizedHandle,
       displayName: displayName.trim() || undefined,
     };
     localStorage.setItem(storageKey, JSON.stringify(payload));
-    setVoxaHandle(normalizedHandle);
+    setYandleHandle(normalizedHandle);
 
     if (apiBase) {
       try {
@@ -778,7 +1022,7 @@ const Dashboard = () => {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            authorization: `Bearer ${localStorage.getItem("voxa_id_token") || ""}`,
+            authorization: `Bearer ${localStorage.getItem("yandle_id_token") || ""}`,
           },
           body: JSON.stringify({
             handle: normalizedHandle,
@@ -788,10 +1032,11 @@ const Dashboard = () => {
             voiceId: (formData.voiceId as string) || "tiffany",
             persona: useCase
               ? `${useCase.title} assistant for lead qualification and conversation routing`
-              : "Yandle assistant",
+              : "YANDLE assistant",
             knowledgeSummary: JSON.stringify(formData).slice(0, 1500),
             captureEmail: formData.captureEmail !== false,
             capturePhone: formData.capturePhone !== false,
+            websiteEnabled: formData.websiteEnabled !== false,
             useCaseId: useCase?.id,
           }),
         });
@@ -817,17 +1062,19 @@ const Dashboard = () => {
           }
           throw new Error(msg || `HTTP ${response.status}`);
         }
-        if (slotConfig.slotGranularityMinutes != null || slotConfig.bufferBetweenMinutes != null) {
+        if (useCase?.id !== "general" && useCase?.id !== "customer_support" && (slotConfig.slotGranularityMinutes != null || slotConfig.bufferBetweenMinutes != null || slotConfig.openHour != null || slotConfig.closeHour != null)) {
           await fetch(`${apiBase}/config/slots`, {
             method: "POST",
             headers: {
               "content-type": "application/json",
-              authorization: `Bearer ${localStorage.getItem("voxa_id_token") || ""}`,
+              authorization: `Bearer ${localStorage.getItem("yandle_id_token") || ""}`,
             },
             body: JSON.stringify({
               handle: normalizedHandle,
               slotGranularityMinutes: slotConfig.slotGranularityMinutes ?? 15,
               bufferBetweenMinutes: slotConfig.bufferBetweenMinutes ?? 0,
+              openHour: slotConfig.openHour ?? 9,
+              closeHour: slotConfig.closeHour ?? 18,
             }),
           }).catch(() => {});
         }
@@ -846,7 +1093,7 @@ const Dashboard = () => {
 
   const [voiceSaving, setVoiceSaving] = useState(false);
   const saveVoice = async (voiceId: string) => {
-    const normalizedHandle = voxaHandle.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
+    const normalizedHandle = yandleHandle.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
     if (!normalizedHandle) return;
     setFormData((prev) => ({ ...prev, voiceId }));
     const sub = getCurrentUserSub();
@@ -873,7 +1120,7 @@ const Dashboard = () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: `Bearer ${localStorage.getItem("voxa_id_token") || ""}`,
+          authorization: `Bearer ${localStorage.getItem("yandle_id_token") || ""}`,
         },
         body: JSON.stringify({ handle: normalizedHandle, voiceId }),
       });
@@ -893,13 +1140,13 @@ const Dashboard = () => {
   };
 
   const savePersona = async () => {
-    const normalizedHandle = voxaHandle.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
+    const normalizedHandle = yandleHandle.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
     if (!normalizedHandle || !apiBase) return;
     setPersonaSaving(true);
     try {
       const resp = await fetch(`${apiBase}/handle`, {
         method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${localStorage.getItem("voxa_id_token") || ""}` },
+        headers: { "content-type": "application/json", authorization: `Bearer ${localStorage.getItem("yandle_id_token") || ""}` },
         body: JSON.stringify({ handle: normalizedHandle, persona }),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -910,16 +1157,19 @@ const Dashboard = () => {
     setPersonaSaving(false);
   };
 
-  const cancelBooking = async (startTime: string) => {
-    if (!apiBase || !voxaHandle) return;
-    setCancellingBooking(startTime);
+  const cancelBooking = async (b: { startTime: string; bookingId?: string }) => {
+    if (!apiBase || !yandleHandle) return;
+    const key = b.bookingId ? `${b.startTime}#${b.bookingId}` : b.startTime;
+    setCancellingBooking(key);
     try {
-      const r = await fetch(`${apiBase}/bookings?handle=${encodeURIComponent(voxaHandle)}&startTime=${encodeURIComponent(startTime)}`, {
+      const params = new URLSearchParams({ handle: yandleHandle, startTime: b.startTime });
+      if (b.bookingId) params.set("bookingId", b.bookingId);
+      const r = await fetch(`${apiBase}/bookings?${params.toString()}`, {
         method: "DELETE",
-        headers: { authorization: `Bearer ${localStorage.getItem("voxa_id_token") || ""}` },
+        headers: { authorization: `Bearer ${localStorage.getItem("yandle_id_token") || ""}` },
       });
       if (r.ok) {
-        setBookings((prev) => prev.filter((b) => b.startTime !== startTime));
+        setBookings((prev) => prev.filter((x) => (x.bookingId ? `${x.startTime}#${x.bookingId}` : x.startTime) !== key));
         toast({ title: "Booking cancelled" });
       } else {
         toast({ title: "Could not cancel booking", variant: "destructive" });
@@ -941,7 +1191,7 @@ const Dashboard = () => {
     proposal: "bg-violet-500/20 text-violet-400",
   };
 
-  if (!onboardingCheckDone || !voxaHandle) {
+  if (!onboardingCheckDone || !yandleHandle) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <p className="text-sm text-muted-foreground">Loading…</p>
@@ -972,7 +1222,7 @@ const Dashboard = () => {
         {/* Handle switcher */}
         {!collapsed && myHandles.length > 1 && (
           <div className="px-3 pt-3 pb-1 border-b border-sidebar-border space-y-2">
-            <Select value={voxaHandle} onValueChange={(val) => {
+            <Select value={yandleHandle} onValueChange={(val) => {
               const h = myHandles.find((x: any) => x.handle === val);
               if (h) switchHandle(h);
             }}>
@@ -1003,7 +1253,7 @@ const Dashboard = () => {
           <div className="px-3 pt-3 pb-1 border-b border-sidebar-border space-y-1">
             <div className="flex items-center gap-2 px-1">
               <Building2 className="h-4 w-4 text-sidebar-foreground/60 shrink-0" />
-              <span className="text-sm font-medium text-sidebar-foreground truncate">{displayName || voxaHandle}</span>
+              <span className="text-sm font-medium text-sidebar-foreground truncate">{displayName || yandleHandle}</span>
             </div>
             {handlePhoneNumber && (
               <div className="flex items-center gap-1.5 px-1 pb-1">
@@ -1031,14 +1281,31 @@ const Dashboard = () => {
           ))}
         </nav>
 
-        {/* Link card at bottom */}
+        {/* Link cards at bottom */}
         {!collapsed && (
-          <div className="p-3 border-t border-sidebar-border">
-            <div className="rounded-lg bg-sidebar-accent p-3 space-y-2">
+          <div className="p-3 border-t border-sidebar-border space-y-2">
+            {/* Shareable link */}
+            <div className="rounded-lg bg-sidebar-accent p-3 space-y-1.5">
+              <p className="text-xs text-sidebar-foreground/60">Shareable link</p>
+              <div className="flex items-center gap-2">
+                <Share2 className="h-3.5 w-3.5 text-sidebar-primary shrink-0" />
+                <span className="text-xs font-medium text-sidebar-primary truncate cursor-pointer" onClick={() => navigate(shareablePath)}>
+                  callcentral.io/shareable/{yandleHandle || "..."}
+                </span>
+              </div>
+              <Button size="sm" variant="ghost" className="h-6 text-xs w-full gap-1" onClick={() => {
+                navigator.clipboard.writeText(`https://callcentral.io/shareable/${yandleHandle}`);
+                toast({ title: "Copied!", description: "Shareable link copied to clipboard." });
+              }}>
+                <Copy className="h-3 w-3" /> Copy link
+              </Button>
+            </div>
+            {/* Website link */}
+            <div className="rounded-lg bg-sidebar-accent p-3 space-y-1.5">
               <p className="text-xs text-sidebar-foreground/60">Your website</p>
               <div className="flex items-center gap-2">
                 <LinkIcon className="h-3.5 w-3.5 text-sidebar-primary shrink-0" />
-                <span className="text-sm font-medium text-sidebar-primary truncate">{voxaLink}</span>
+                <span className="text-sm font-medium text-sidebar-primary truncate">{yandleLink}</span>
               </div>
               <div className="flex gap-1.5">
                 <Button size="sm" variant="ghost" className="h-7 text-xs flex-1 gap-1" onClick={handleCopy}>
@@ -1069,7 +1336,7 @@ const Dashboard = () => {
               <ExternalLink className="h-3 w-3" /> View Link
             </Button>
             <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold text-sm">
-              {voxaHandle[0]?.toUpperCase() || "V"}
+              {yandleHandle[0]?.toUpperCase() || "V"}
             </div>
           </div>
         </header>
@@ -1087,7 +1354,7 @@ const Dashboard = () => {
               <div className="rounded-xl border border-border bg-card/50 p-6 bg-radial-glow relative overflow-hidden">
                 <div className="relative z-10">
                   <h2 className="font-display text-2xl font-bold mb-2">
-                    Welcome back{voxaHandle ? `, ${voxaHandle}` : ""}! 👋
+                    Welcome back{yandleHandle ? `, ${yandleHandle}` : ""}! 👋
                   </h2>
                   <p className="text-muted-foreground mb-4">
                     Your AI is live and handling conversations. Here's what's happening with your{" "}
@@ -1115,7 +1382,7 @@ const Dashboard = () => {
                     Recent bookings
                   </CardTitle>
                   <p className="text-xs text-muted-foreground">
-                    Bookings created via voice or API for handle <strong>{voxaHandle || "—"}</strong>
+                    Bookings created via voice or API for handle <strong>{yandleHandle || "—"}</strong>
                   </p>
                 </CardHeader>
                 <CardContent>
@@ -1131,7 +1398,7 @@ const Dashboard = () => {
                               {(b.centerName && b.machineType) ? `${b.centerName} · ${b.machineType}` : (b.serviceId || b.branchId || b.doctorId || b.locationId || "Booking")}
                             </p>
                             <p className="text-xs text-muted-foreground truncate">
-                              {formatInIST(b.startTime)} · {b.name || "—"} · {[b.phone, b.email].filter(Boolean).join(" · ") || "—"}
+                              {formatDateTimeUTC(b.startTime)} · {b.name || "—"} · {[b.phone, b.email].filter(Boolean).join(" · ") || "—"}
                             </p>
                           </div>
                           {b.status && (
@@ -1221,7 +1488,7 @@ const Dashboard = () => {
                                 {b.machineType || "Machine"} · {b.centerName || "Center"}
                               </p>
                               <p className="text-xs text-muted-foreground truncate">
-                                {formatInIST(b.startTime) || "Time not set"}
+                                {formatDateTimeUTC(b.startTime) || "Time not set"}
                               </p>
                             </div>
                             {b.status && (
@@ -1266,10 +1533,8 @@ const Dashboard = () => {
                           <widget.icon className="h-4 w-4 text-primary" />
                         </CardHeader>
                         <CardContent>
-                          <div className="text-3xl font-display font-bold">{widget.mockValue}</div>
-                          <p className="text-xs text-emerald-400 flex items-center gap-1 mt-1">
-                            <TrendingUp className="h-3 w-3" /> +12% from last week
-                          </p>
+                          <div className="text-3xl font-display font-bold text-muted-foreground/50">—</div>
+                          <p className="text-xs text-muted-foreground mt-1">Data will appear once activity starts</p>
                         </CardContent>
                       </Card>
                     </motion.div>
@@ -1287,31 +1552,9 @@ const Dashboard = () => {
                           <widget.icon className="h-4 w-4 text-primary" />
                           {widget.title}
                         </CardTitle>
-                        <Button variant="ghost" size="sm" className="text-xs text-muted-foreground">
-                          View all
-                        </Button>
                       </CardHeader>
-                      <CardContent className="space-y-3">
-                        {widget.mockItems?.map((item, i) => (
-                          <div
-                            key={i}
-                            className="flex items-center justify-between py-2.5 px-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors"
-                          >
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium truncate">{item.label}</p>
-                              <p className="text-xs text-muted-foreground">{item.value}</p>
-                            </div>
-                            {item.status && (
-                              <span
-                                className={`text-xs px-2 py-0.5 rounded-full capitalize whitespace-nowrap ${
-                                  statusColors[item.status] || "bg-muted text-muted-foreground"
-                                }`}
-                              >
-                                {item.status}
-                              </span>
-                            )}
-                          </div>
-                        ))}
+                      <CardContent>
+                        <p className="text-sm text-muted-foreground">No data yet — data will appear once you start receiving calls and bookings.</p>
                       </CardContent>
                     </Card>
                   ))}
@@ -1326,28 +1569,15 @@ const Dashboard = () => {
                           <widget.icon className="h-4 w-4 text-primary" />
                           {widget.title}
                         </CardTitle>
-                        <span className="text-xs text-muted-foreground">Last 12 months</span>
                       </CardHeader>
                       <CardContent>
-                        <div className="flex items-end gap-1.5 h-40">
-                          {chartData.map((val, i) => (
-                            <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                              <motion.div
-                                className="w-full rounded-t bg-primary/60 hover:bg-primary transition-colors min-w-[4px]"
-                                initial={{ height: 0 }}
-                                animate={{ height: `${(val / 80) * 100}%` }}
-                                transition={{ delay: i * 0.03, duration: 0.4 }}
-                              />
-                              <span className="text-[9px] text-muted-foreground">{chartLabels[i]}</span>
-                            </div>
-                          ))}
-                        </div>
+                        <p className="text-sm text-muted-foreground">No conversation data yet — chart will populate as AI conversations occur.</p>
                       </CardContent>
                     </Card>
                   ))}
               </div>
 
-              {/* Recent conversations */}
+              {/* Recent conversations — real data */}
               <Card className="bg-card/50 border-border">
                 <CardHeader>
                   <CardTitle className="text-base font-display font-semibold flex items-center gap-2">
@@ -1356,32 +1586,30 @@ const Dashboard = () => {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {[
-                    { name: "Anonymous User", time: "5 min ago", mode: "Voice", duration: "2:34" },
-                    { name: "Sarah K.", time: "23 min ago", mode: "Text", duration: "4:12" },
-                    { name: "Anonymous User", time: "1 hr ago", mode: "Voice", duration: "1:58" },
-                    { name: "Mike R.", time: "2 hrs ago", mode: "Text", duration: "6:45" },
-                  ].map((conv, i) => (
+                  {conversations.length > 0 ? conversations.slice(0, 4).map((conv, i) => (
                     <div
-                      key={i}
+                      key={conv.sessionId || i}
                       className="flex items-center justify-between py-3 px-4 rounded-lg bg-secondary/20 hover:bg-secondary/40 transition-colors cursor-pointer"
+                      onClick={() => { setActiveNav("conversations"); }}
                     >
                       <div className="flex items-center gap-3">
                         <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-                          {conv.mode === "Voice" ? (
+                          {conv.channel === "voice" ? (
                             <Mic className="h-3.5 w-3.5 text-primary" />
                           ) : (
                             <MessageSquare className="h-3.5 w-3.5 text-primary" />
                           )}
                         </div>
                         <div>
-                          <p className="text-sm font-medium">{conv.name}</p>
-                          <p className="text-xs text-muted-foreground">{conv.mode} · {conv.duration}</p>
+                          <p className="text-sm font-medium">{conv.user || "Anonymous"}</p>
+                          <p className="text-xs text-muted-foreground">{conv.channel}{conv.duration ? ` · ${conv.duration}` : ""}</p>
                         </div>
                       </div>
                       <span className="text-xs text-muted-foreground">{conv.time}</span>
                     </div>
-                  ))}
+                  )) : (
+                    <p className="text-sm text-muted-foreground">No conversations yet — conversations will appear as users interact with your AI.</p>
+                  )}
                 </CardContent>
               </Card>
             </motion.div>
@@ -1396,15 +1624,15 @@ const Dashboard = () => {
             >
               {/* Bookings header with actions */}
               <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
+                <div>
                   <h2 className="text-base font-display font-semibold flex items-center gap-2">
-                      <Calendar className="h-4 w-4 text-primary" />
-                      Bookings
+                    <Calendar className="h-4 w-4 text-primary" />
+                    Bookings
                   </h2>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                      All bookings for handle <strong>{voxaHandle || "—"}</strong>
-                    </p>
-                  </div>
+                    All bookings for handle <strong>{yandleHandle || "—"}</strong>
+                  </p>
+                </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Button
                     variant="default"
@@ -1437,9 +1665,9 @@ const Dashboard = () => {
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      if (!apiBase || !voxaHandle) return;
-                      fetch(`${apiBase}/bookings?handle=${encodeURIComponent(voxaHandle)}`, {
-                        headers: { authorization: `Bearer ${localStorage.getItem("voxa_id_token") || ""}` },
+                      if (!apiBase || !yandleHandle) return;
+                      fetch(`${apiBase}/bookings?handle=${encodeURIComponent(yandleHandle)}`, {
+                        headers: { authorization: `Bearer ${localStorage.getItem("yandle_id_token") || ""}` },
                       })
                         .then((r) => (r.ok ? r.json() : null))
                         .then((json) => setBookings(Array.isArray(json?.bookings) ? json.bookings : []))
@@ -1451,7 +1679,219 @@ const Dashboard = () => {
                 </div>
               </div>
 
-              {/* Upcoming / Past tabs */}
+              {useCase?.id === "gaming_cafe" ? (
+                <>
+                  {/* Branch and date filters above all tabs */}
+                  <div className="flex flex-wrap items-center gap-4 pb-4 border-b border-border">
+                    {(centersList || []).length > 1 && (
+                      <div className="flex items-center gap-2">
+                        <Label className="text-sm font-medium">Branch</Label>
+                        <Select value={gamingSelectedCenterName || (centersList?.[0]?.name ?? "")} onValueChange={setGamingSelectedCenterName}>
+                          <SelectTrigger className="w-44 bg-card/50"><SelectValue placeholder="Select branch" /></SelectTrigger>
+                          <SelectContent>
+                            {(centersList || []).map((c: any) => <SelectItem key={c.centerId || c.name} value={c.name}>{c.name}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <Label className="text-sm font-medium">Date</Label>
+                      <Input
+                        type="date"
+                        value={gridDate}
+                        onChange={(e) => setGridDate(e.target.value)}
+                        className="w-40"
+                      />
+                    </div>
+                  </div>
+                  <Tabs value={gamingBookingsSubTab} onValueChange={(v) => setGamingBookingsSubTab(v as "dashboard" | "reservations" | "hardware")} className="w-full">
+                    <TabsList className="bg-muted/40 border border-border">
+                      <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
+                      <TabsTrigger value="reservations">Reservations</TabsTrigger>
+                      <TabsTrigger value="hardware">Hardware</TabsTrigger>
+                    </TabsList>
+                  <TabsContent value="dashboard" className="space-y-4 pt-4">
+                    {gridDateBookingsLoading ? (
+                      <p className="text-sm text-muted-foreground py-4">Loading…</p>
+                    ) : (
+                      (() => {
+                        const centers = centersList || [];
+                        const selectedCenter = gamingSelectedCenterName || centers[0]?.name || "";
+                        const dayBookings = gridDateBookings;
+                        const branchBookings = selectedCenter ? dayBookings.filter((b: any) => (b.centerName || "").toLowerCase() === selectedCenter.toLowerCase()) : [];
+                        const virtualStations = buildVirtualStations(centers);
+                        const branchStations = selectedCenter ? virtualStations.filter((s) => s.centerName === selectedCenter) : [];
+                        const now = new Date();
+                        const activeNow = branchBookings.filter((b: any) => {
+                          const start = new Date(b.startTime);
+                          const end = new Date(start.getTime() + (b.durationMinutes || 60) * 60000);
+                          return start <= now && end >= now;
+                        }).length;
+                        const upcoming = branchBookings.filter((b: any) => new Date(b.startTime) >= now).sort((a: any, b: any) => (a.startTime || "").localeCompare(b.startTime || ""));
+                        return (
+                          <>
+                            {selectedCenter && (
+                              <>
+                                <div className="grid grid-cols-2 gap-3">
+                                  <Card className="bg-card/50 border-border p-4">
+                                    <p className="text-xs text-muted-foreground">Active now</p>
+                                    <p className="text-2xl font-bold text-primary">{activeNow} / {branchStations.length}</p>
+                                    <p className="text-xs text-muted-foreground">sessions</p>
+                                  </Card>
+                                  <Card className="bg-card/50 border-border p-4">
+                                    <p className="text-xs text-muted-foreground">{gridDate === new Date().toLocaleDateString("en-CA", { timeZone: "UTC" }) ? "Today's bookings" : "Bookings on selected date"}</p>
+                                    <p className="text-2xl font-bold text-primary">{branchBookings.length}</p>
+                                    <p className="text-xs text-muted-foreground">total</p>
+                                  </Card>
+                                </div>
+                                <Card className="bg-card/50 border-border p-4">
+                                  <p className="text-xs text-muted-foreground">Total stations</p>
+                                  <p className="text-2xl font-bold text-primary">{branchStations.length}</p>
+                                  <p className="text-xs text-muted-foreground">available</p>
+                                </Card>
+                                <div>
+                                  <h3 className="text-sm font-semibold mb-2">Upcoming bookings</h3>
+                                  {upcoming.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground">No upcoming bookings.</p>
+                                  ) : (
+                                    <ul className="space-y-2">
+                                      {upcoming.slice(0, 12).map((b: any, idx: number) => (
+                                        <li key={b.startTime + "-" + idx} className="flex items-center gap-2 text-sm rounded-lg border border-border bg-card/50 px-3 py-2">
+                                          <span className="font-medium text-primary">{formatTimeOnlyUTC(b.startTime)}</span>
+                                          <span className="text-muted-foreground">·</span>
+                                          <span>{b.machineType ?? "—"} — {b.name || b.email || "Guest"}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </div>
+                              </>
+                            )}
+                            {!selectedCenter && centers.length > 0 && <p className="text-sm text-muted-foreground">Select a branch.</p>}
+                            {centers.length === 0 && <p className="text-sm text-muted-foreground">No branches configured.</p>}
+                          </>
+                        );
+                      })()
+                    )}
+                  </TabsContent>
+                  <TabsContent value="reservations" className="space-y-4 pt-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-sm font-semibold">Live availability</h3>
+                      <Button size="sm" onClick={() => { setWalkInStartDate(gridDate); setWalkInStartTime("10:00"); setWalkInCenterName(""); setWalkInMachineType(""); setWalkInName(""); setWalkInPhone(""); setWalkInEmail(""); setWalkInNotes(""); setAddBookingOpen(true); }}>
+                        <Plus className="h-4 w-4 mr-1" /> New Booking
+                      </Button>
+                    </div>
+                    {gridDateBookingsLoading ? (
+                      <p className="text-sm text-muted-foreground py-4">Loading…</p>
+                    ) : (() => {
+                      const selectedCenter = gamingSelectedCenterName || centersList?.[0]?.name || "";
+                      const allStations = buildVirtualStations(centersList || []);
+                      const branchStations = selectedCenter ? allStations.filter((s) => s.centerName === selectedCenter) : [];
+                      const dayBookings = gridDateBookings;
+                      if (!selectedCenter) return <p className="text-sm text-muted-foreground py-4">Select a branch.</p>;
+                      return (
+                        <GamingAvailabilityGrid
+                          stations={branchStations}
+                          bookings={dayBookings}
+                          gridDate={gridDate}
+                          formatTime={formatTimeOnlyUTC}
+                          openHour={slotConfig.openHour ?? 9}
+                          closeHour={slotConfig.closeHour ?? 18}
+                          slotGranularityMinutes={slotConfig.slotGranularityMinutes ?? 60}
+                          onSlotClick={(station, slotStartIso) => {
+                            const d = new Date(slotStartIso);
+                            setWalkInStartDate(d.toLocaleDateString("en-CA", { timeZone: "UTC" }));
+                            setWalkInStartTime(`${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`);
+                            setWalkInCenterName(station.centerName);
+                            setWalkInMachineType(station.machineType);
+                            setWalkInName("");
+                            setWalkInPhone("");
+                            setWalkInEmail("");
+                            setWalkInNotes("");
+                            setAddBookingOpen(true);
+                          }}
+                        />
+                      );
+                    })()}
+                  </TabsContent>
+                  <TabsContent value="hardware" className="space-y-4 pt-4">
+                    {gridDateBookingsLoading ? (
+                      <p className="text-sm text-muted-foreground py-4">Loading…</p>
+                    ) : (() => {
+                      const centers = centersList || [];
+                      const selectedCenter = gamingSelectedCenterName || centers[0]?.name || "";
+                      const todayUtc = new Date().toLocaleDateString("en-CA", { timeZone: "UTC" });
+                      const dayBookings = gridDateBookings;
+                      const allStations = buildVirtualStations(centers);
+                      const branchStations = selectedCenter ? allStations.filter((s) => s.centerName === selectedCenter) : [];
+                      const branchBookings = selectedCenter ? dayBookings.filter((b: any) => (b.centerName || "").toLowerCase() === selectedCenter.toLowerCase()) : [];
+                      const now = new Date();
+                      const bookedNow = branchBookings.filter((b: any) => {
+                        const start = new Date(b.startTime);
+                        const end = new Date(start.getTime() + (b.durationMinutes || 60) * 60000);
+                        return start <= now && end >= now;
+                      }).length;
+                      return (
+                        <>
+                          <div className="flex gap-3 flex-wrap">
+                            <Card className="bg-card/50 border-border p-3">
+                              <p className="text-xs text-muted-foreground">Total units</p>
+                              <p className="text-xl font-bold text-primary">{branchStations.length}</p>
+                            </Card>
+                            <Card className="bg-card/50 border-border p-3">
+                              <p className="text-xs text-muted-foreground">{gridDate === todayUtc ? "Booked now" : "Bookings on this date"}</p>
+                              <p className="text-xl font-bold text-primary">{gridDate === todayUtc ? bookedNow : branchBookings.length}</p>
+                            </Card>
+                          </div>
+                          {selectedCenter ? (
+                            <ul className="space-y-2">
+                              {branchStations.map((s, idx) => {
+                                const activeNowForMachine = branchBookings
+                                  .filter((b: any) => {
+                                    const cn = (b.centerName || "").toLowerCase();
+                                    const mt = (b.machineType || "").toLowerCase();
+                                    if (cn !== s.centerName.toLowerCase() || mt !== s.machineType.toLowerCase()) return false;
+                                    const start = new Date(b.startTime);
+                                    const end = new Date(start.getTime() + (b.durationMinutes || 60) * 60000);
+                                    return start <= now && end >= now;
+                                  })
+                                  .sort((a: any, b: any) => {
+                                    const byTime = (a.startTime || "").localeCompare(b.startTime || "");
+                                    if (byTime !== 0) return byTime;
+                                    return (a.bookingId || "").localeCompare(b.bookingId || "");
+                                  });
+                                const booking = activeNowForMachine[s.slotIndex] ?? null;
+                                const status = booking ? "Occupied" : "Available";
+                                const statusColor = booking ? "bg-amber-500/15 text-amber-600 dark:text-amber-400" : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400";
+                                return (
+                                  <li key={s.centerId + s.machineType + s.slotIndex + idx} className="flex items-center gap-3 rounded-lg border border-border bg-card/50 p-3">
+                                    <div className="flex items-center gap-2">
+                                      <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center">
+                                        <Headset className="h-4 w-4 text-primary" />
+                                      </div>
+                                      <div>
+                                        <p className="font-medium text-sm">{s.displayLabel}</p>
+                                        <p className="text-xs text-muted-foreground">{s.machineName}</p>
+                                        <span className={`inline-block mt-1 px-2 py-0.5 rounded text-xs font-medium ${statusColor}`}>{status}</span>
+                                      </div>
+                                    </div>
+                                    {booking && <span className="text-xs text-muted-foreground ml-auto">{formatTimeOnlyIST(booking.startTime)}</span>}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          ) : (
+                            <p className="text-sm text-muted-foreground">Select a branch.</p>
+                          )}
+                          {centers.length === 0 && <p className="text-sm text-muted-foreground">No branches configured.</p>}
+                        </>
+                      );
+                    })()}
+                  </TabsContent>
+                </Tabs>
+                </>
+              ) : (
+              /* Upcoming / Past tabs */
               <Tabs defaultValue="upcoming" className="w-full">
                 <TabsList className="bg-muted/40 border border-border">
                   <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
@@ -1510,7 +1950,7 @@ const Dashboard = () => {
                           <div className="mt-1.5 ml-1 rounded-lg border border-border bg-card p-3 text-xs space-y-2 shadow-sm max-w-xs">
                             <div>
                               <p className="text-muted-foreground font-medium">Time</p>
-                              <p className="font-medium">{formatInIST(b.startTime)}</p>
+                              <p className="font-medium">{formatDateTimeUTC(b.startTime)}</p>
                               {b.durationMinutes != null && <p className="text-muted-foreground">{b.durationMinutes} min</p>}
                             </div>
                             <div>
@@ -1533,10 +1973,10 @@ const Dashboard = () => {
                                 variant="destructive"
                                 size="sm"
                                 className="h-7 text-xs mt-1"
-                                disabled={cancellingBooking === b.startTime}
-                                onClick={(e) => { e.stopPropagation(); cancelBooking(b.startTime); }}
+                                disabled={cancellingBooking === (b.bookingId ? `${b.startTime}#${b.bookingId}` : b.startTime)}
+                                onClick={(e) => { e.stopPropagation(); cancelBooking(b); }}
                               >
-                                {cancellingBooking === b.startTime ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+                                {cancellingBooking === (b.bookingId ? `${b.startTime}#${b.bookingId}` : b.startTime) ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
                                 Cancel booking
                               </Button>
                             )}
@@ -1637,8 +2077,8 @@ const Dashboard = () => {
                                           </span>
                                         )}
                                       </CardTitle>
-                </CardHeader>
-                <CardContent>
+                                    </CardHeader>
+                                    <CardContent>
                                       <div className="flex flex-wrap gap-1.5">
                                         {branchBookings.map((b: any, idx: number) => {
                                           const svc = servicesList.find((s: any) => s.serviceId === b.serviceId);
@@ -1673,7 +2113,7 @@ const Dashboard = () => {
                                                 <div className="mt-1.5 ml-1 rounded-lg border border-border bg-card p-3 text-xs space-y-2 shadow-sm max-w-xs">
                                                   <div>
                                                     <p className="text-muted-foreground font-medium">Time</p>
-                                                    <p className="font-medium">{formatInIST(b.startTime)}</p>
+                                                    <p className="font-medium">{formatDateTimeUTC(b.startTime)}</p>
                                                     {b.durationMinutes != null && <p className="text-muted-foreground">{b.durationMinutes} min</p>}
                                                   </div>
                                                   {svcName && (
@@ -1701,10 +2141,10 @@ const Dashboard = () => {
                                                       variant="destructive"
                                                       size="sm"
                                                       className="h-7 text-xs mt-1"
-                                                      disabled={cancellingBooking === b.startTime}
-                                                      onClick={(e) => { e.stopPropagation(); cancelBooking(b.startTime); }}
+                                                      disabled={cancellingBooking === (b.bookingId ? `${b.startTime}#${b.bookingId}` : b.startTime)}
+                                                      onClick={(e) => { e.stopPropagation(); cancelBooking(b); }}
                                                     >
-                                                      {cancellingBooking === b.startTime ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+                                                      {cancellingBooking === (b.bookingId ? `${b.startTime}#${b.bookingId}` : b.startTime) ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
                                                       Cancel booking
                                                     </Button>
                                                   )}
@@ -1776,7 +2216,7 @@ const Dashboard = () => {
                                                 <div className="mt-1.5 ml-1 rounded-lg border border-border bg-card p-3 text-xs space-y-2 shadow-sm max-w-xs">
                                                   <div>
                                                     <p className="text-muted-foreground font-medium">Time</p>
-                                                    <p className="font-medium">{formatInIST(b.startTime)}</p>
+                                                    <p className="font-medium">{formatDateTimeUTC(b.startTime)}</p>
                                                     {b.durationMinutes != null && <p className="text-muted-foreground">{b.durationMinutes} min</p>}
                                                   </div>
                                                   <div>
@@ -1804,10 +2244,10 @@ const Dashboard = () => {
                                                       variant="destructive"
                                                       size="sm"
                                                       className="h-7 text-xs mt-1"
-                                                      disabled={cancellingBooking === b.startTime}
-                                                      onClick={(e) => { e.stopPropagation(); cancelBooking(b.startTime); }}
+                                                      disabled={cancellingBooking === (b.bookingId ? `${b.startTime}#${b.bookingId}` : b.startTime)}
+                                                      onClick={(e) => { e.stopPropagation(); cancelBooking(b); }}
                                                     >
-                                                      {cancellingBooking === b.startTime ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+                                                      {cancellingBooking === (b.bookingId ? `${b.startTime}#${b.bookingId}` : b.startTime) ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
                                                       Cancel booking
                                                     </Button>
                                                   )}
@@ -1868,6 +2308,7 @@ const Dashboard = () => {
                   );
                 })}
               </Tabs>
+              )}
 
               <Dialog open={addBookingOpen} onOpenChange={setAddBookingOpen}>
                 <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
@@ -1997,12 +2438,12 @@ const Dashboard = () => {
                     <Button
                       disabled={walkInSubmitting || !walkInName.trim() || (!walkInPhone.trim() && !walkInEmail.trim()) || !walkInStartDate || !walkInStartTime}
                       onClick={async () => {
-                        if (!apiBase || !voxaHandle) return;
+                        if (!apiBase || !yandleHandle) return;
                         const startTime = `${walkInStartDate}T${walkInStartTime}:00+05:30`;
                         setWalkInSubmitting(true);
                         try {
                           const body: Record<string, unknown> = {
-                            handle: voxaHandle,
+                            handle: yandleHandle,
                             startTime,
                             name: walkInName.trim(),
                             phone: walkInPhone.trim() || undefined,
@@ -2018,7 +2459,7 @@ const Dashboard = () => {
                           if (walkInMachineType) body.machineType = walkInMachineType;
                           const r = await fetch(`${apiBase}/bookings`, {
                             method: "POST",
-                            headers: { "content-type": "application/json", authorization: `Bearer ${localStorage.getItem("voxa_id_token") || ""}` },
+                            headers: { "content-type": "application/json", authorization: `Bearer ${localStorage.getItem("yandle_id_token") || ""}` },
                             body: JSON.stringify(body),
                           });
                           const data = r.ok ? await r.json() : null;
@@ -2043,6 +2484,203 @@ const Dashboard = () => {
             </motion.div>
           )}
 
+          {/* Requests tab — general business type */}
+          {activeNav === "requests" && useCase?.id === "general" && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3 }}
+              className="space-y-6"
+            >
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-semibold text-foreground">Callback Requests</h2>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setRequestsLoading(true);
+                    const token = localStorage.getItem("yandle_id_token") || "";
+                    fetch(`${apiBase}/requests?handle=${encodeURIComponent(yandleHandle)}`, {
+                      headers: { authorization: `Bearer ${token}` },
+                    })
+                      .then((r) => (r.ok ? r.json() : null))
+                      .then((data) => setRequestsList(Array.isArray(data?.items) ? data.items : []))
+                      .catch(() => {})
+                      .finally(() => setRequestsLoading(false));
+                  }}
+                >
+                  Refresh
+                </Button>
+              </div>
+              {requestsLoading ? (
+                <div className="flex justify-center py-12"><Loader2 className="animate-spin h-8 w-8 text-muted-foreground" /></div>
+              ) : requestsList.length === 0 ? (
+                <Card className="bg-card/50 border-border">
+                  <CardContent className="py-12 text-center text-muted-foreground">
+                    No requests yet — requests will appear once callers leave callback messages via AI.
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="space-y-3">
+                  {requestsList.map((req) => (
+                    <Card key={req.requestId} className="bg-card/50 border-border">
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between">
+                          <div className="space-y-1 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-foreground">{req.callerName || "Unknown"}</span>
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                                req.classification === "important" ? "bg-emerald-500/20 text-emerald-600" :
+                                req.classification === "spam" ? "bg-red-500/20 text-red-600" :
+                                "bg-yellow-500/20 text-yellow-600"
+                              }`}>
+                                {req.classification || "unknown"}
+                              </span>
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                                req.status === "new" ? "bg-blue-500/20 text-blue-600" :
+                                req.status === "reviewed" ? "bg-purple-500/20 text-purple-600" :
+                                "bg-emerald-500/20 text-emerald-600"
+                              }`}>
+                                {req.status}
+                              </span>
+                            </div>
+                            {req.phone && <p className="text-sm text-muted-foreground">Phone: {req.phone}</p>}
+                            {req.email && <p className="text-sm text-muted-foreground">Email: {req.email}</p>}
+                            {req.description && <p className="text-sm text-foreground mt-1">{req.description}</p>}
+                            <p className="text-xs text-muted-foreground">{formatInIST(req.createdAt)} &middot; via {req.source}</p>
+                          </div>
+                          <div className="flex items-center gap-2 ml-4">
+                            <Select
+                              value={req.status}
+                              onValueChange={async (val) => {
+                                const token = localStorage.getItem("yandle_id_token") || "";
+                                await fetch(`${apiBase}/requests`, {
+                                  method: "PUT",
+                                  headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+                                  body: JSON.stringify({ handle: yandleHandle, requestId: req.requestId, status: val }),
+                                });
+                                setRequestsList((prev) => prev.map((r) => r.requestId === req.requestId ? { ...r, status: val } : r));
+                              }}
+                            >
+                              <SelectTrigger className="w-[120px] h-8 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="new">New</SelectItem>
+                                <SelectItem value="reviewed">Reviewed</SelectItem>
+                                <SelectItem value="actioned">Actioned</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {/* Tickets tab — customer_support business type */}
+          {activeNav === "tickets" && useCase?.id === "customer_support" && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3 }}
+              className="space-y-6"
+            >
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-semibold text-foreground">Support Tickets</h2>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setTicketsLoading(true);
+                    const token = localStorage.getItem("yandle_id_token") || "";
+                    fetch(`${apiBase}/tickets?handle=${encodeURIComponent(yandleHandle)}`, {
+                      headers: { authorization: `Bearer ${token}` },
+                    })
+                      .then((r) => (r.ok ? r.json() : null))
+                      .then((data) => setTicketsList(Array.isArray(data?.items) ? data.items : []))
+                      .catch(() => {})
+                      .finally(() => setTicketsLoading(false));
+                  }}
+                >
+                  Refresh
+                </Button>
+              </div>
+              {ticketsLoading ? (
+                <div className="flex justify-center py-12"><Loader2 className="animate-spin h-8 w-8 text-muted-foreground" /></div>
+              ) : ticketsList.length === 0 ? (
+                <Card className="bg-card/50 border-border">
+                  <CardContent className="py-12 text-center text-muted-foreground">
+                    No tickets yet — tickets will appear once customers report issues via AI.
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="space-y-3">
+                  {ticketsList.map((ticket) => (
+                    <Card key={ticket.ticketId} className="bg-card/50 border-border">
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between">
+                          <div className="space-y-1 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono text-sm text-muted-foreground">{ticket.ticketId}</span>
+                              <span className="font-medium text-foreground">{ticket.customerName || "Unknown"}</span>
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                                ticket.priority === "high" ? "bg-red-500/20 text-red-600" :
+                                ticket.priority === "low" ? "bg-gray-500/20 text-gray-600" :
+                                "bg-yellow-500/20 text-yellow-600"
+                              }`}>
+                                {ticket.priority}
+                              </span>
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-primary/20 text-primary">
+                                {ticket.category}
+                              </span>
+                            </div>
+                            {ticket.phone && <p className="text-sm text-muted-foreground">Phone: {ticket.phone}</p>}
+                            {ticket.email && <p className="text-sm text-muted-foreground">Email: {ticket.email}</p>}
+                            {ticket.description && <p className="text-sm text-foreground mt-1">{ticket.description}</p>}
+                            <p className="text-xs text-muted-foreground">{formatInIST(ticket.createdAt)} &middot; via {ticket.source}</p>
+                            {ticket.resolvedAt && <p className="text-xs text-emerald-600">Resolved: {formatInIST(ticket.resolvedAt)}</p>}
+                          </div>
+                          <div className="flex items-center gap-2 ml-4">
+                            <Select
+                              value={ticket.status}
+                              onValueChange={async (val) => {
+                                setUpdatingTicketId(ticket.ticketId);
+                                const token = localStorage.getItem("yandle_id_token") || "";
+                                await fetch(`${apiBase}/tickets`, {
+                                  method: "PUT",
+                                  headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+                                  body: JSON.stringify({ handle: yandleHandle, ticketId: ticket.ticketId, status: val }),
+                                });
+                                setTicketsList((prev) => prev.map((t) =>
+                                  t.ticketId === ticket.ticketId
+                                    ? { ...t, status: val, resolvedAt: (val === "Resolved" || val === "Closed") ? new Date().toISOString() : t.resolvedAt }
+                                    : t
+                                ));
+                                setUpdatingTicketId(null);
+                              }}
+                            >
+                              <SelectTrigger className="w-[130px] h-8 text-xs">
+                                {updatingTicketId === ticket.ticketId ? <Loader2 className="animate-spin h-3 w-3" /> : <SelectValue />}
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="Open">Open</SelectItem>
+                                <SelectItem value="InProgress">In Progress</SelectItem>
+                                <SelectItem value="Resolved">Resolved</SelectItem>
+                                <SelectItem value="Closed">Closed</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          )}
+
           {activeNav === "customers" && (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
@@ -2058,16 +2696,16 @@ const Dashboard = () => {
                       Customers
                     </CardTitle>
                     <p className="text-xs text-muted-foreground mt-1">
-                      People who have booked or interacted with <strong>{voxaHandle || "—"}</strong>
+                      People who have booked or interacted with <strong>{yandleHandle || "—"}</strong>
                     </p>
                   </div>
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      if (!apiBase || !voxaHandle) return;
-                      const token = localStorage.getItem("voxa_id_token") || "";
-                      fetch(`${apiBase}/customers?handle=${encodeURIComponent(voxaHandle)}`, {
+                      if (!apiBase || !yandleHandle) return;
+                      const token = localStorage.getItem("yandle_id_token") || "";
+                      fetch(`${apiBase}/customers?handle=${encodeURIComponent(yandleHandle)}`, {
                         headers: { authorization: `Bearer ${token}` },
                       })
                         .then((r) => (r.ok ? r.json() : null))
@@ -2118,15 +2756,15 @@ const Dashboard = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="font-display text-xl font-semibold">Conversations</h2>
-                  <p className="text-sm text-muted-foreground mt-0.5">All voice and text sessions for <strong>{voxaHandle}</strong></p>
+                  <p className="text-sm text-muted-foreground mt-0.5">All voice and text sessions for <strong>{yandleHandle}</strong></p>
                 </div>
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    if (!apiBase || !voxaHandle) return;
-                    const token = localStorage.getItem("voxa_id_token") || "";
-                    fetch(`${apiBase}/public/${voxaHandle}/conversations?limit=50`, { headers: { authorization: `Bearer ${token}` } })
+                    if (!apiBase || !yandleHandle) return;
+                    const token = localStorage.getItem("yandle_id_token") || "";
+                    fetch(`${apiBase}/public/${yandleHandle}/conversations?limit=50`, { headers: { authorization: `Bearer ${token}` } })
                       .then((r) => (r.ok ? r.json() : null))
                       .then((data) => {
                         const sessions = data?.sessions || [];
@@ -2151,7 +2789,7 @@ const Dashboard = () => {
               </div>
 
               {conversations.length === 0 ? (
-              <Card className="bg-card/50 border-border">
+                <Card className="bg-card/50 border-border">
                   <CardContent className="py-12 text-center">
                     <MessageSquare className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
                     <p className="text-sm text-muted-foreground">No conversations yet. Sessions from your AI voice and text will appear here.</p>
@@ -2173,7 +2811,7 @@ const Dashboard = () => {
                               conv.channel === "voice" ? "bg-primary/15 text-primary" : "bg-secondary text-muted-foreground"
                             }`}>
                               {conv.channel === "voice" ? <Mic className="h-4 w-4" /> : <MessageSquare className="h-4 w-4" />}
-                      </div>
+                            </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
                                 <p className="text-sm font-medium truncate">
@@ -2181,7 +2819,7 @@ const Dashboard = () => {
                                 </p>
                                 <span className={`text-xs px-2 py-0.5 rounded-full capitalize shrink-0 ${statusColors[conv.status] || "bg-muted text-muted-foreground"}`}>
                                   {conv.status}
-                      </span>
+                                </span>
                               </div>
                               <p className="text-xs text-muted-foreground truncate mt-0.5">
                                 {conv.channel === "voice" ? "Voice call" : "Text chat"}
@@ -2222,8 +2860,8 @@ const Dashboard = () => {
                                         {msg.role === "assistant" || msg.role === "ai" ? "AI:" : (conv.user || "Caller") + ":"}
                                       </span>
                                       {msg.content || msg.text || ""}
-                    </div>
-                  ))}
+                                    </div>
+                                  ))}
                                 </div>
                               </div>
                             ) : conv.intent ? (
@@ -2238,7 +2876,7 @@ const Dashboard = () => {
                             </div>
                           </div>
                         )}
-              </Card>
+                      </Card>
                     );
                   })}
                 </div>
@@ -2258,7 +2896,7 @@ const Dashboard = () => {
                   <div>
                     <h2 className="font-display text-2xl font-bold mb-1">Voice Experience</h2>
                     <p className="text-sm text-muted-foreground">
-                      Configure the voice, persona, and behavior callers hear on your Yandle link.
+                      Configure the voice, persona, and behavior callers hear on your YANDLE link.
                     </p>
                   </div>
                   <Button
@@ -2272,69 +2910,69 @@ const Dashboard = () => {
                 </div>
               </div>
 
-                <Card className="bg-card/50 border-border">
-                  <CardHeader>
-                    <CardTitle className="text-base font-display font-semibold flex items-center gap-2">
-                      <Mic className="h-4 w-4 text-primary" />
-                      Business Voice
-                    </CardTitle>
-                    <p className="text-sm text-muted-foreground font-normal">
-                    Voice callers hear on your public link (yandle.io/shareable/{voxaHandle || "yourname"}).
-                    </p>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="space-y-2">
-                      <Label>Select voice</Label>
-                      <Select
-                        value={(formData.voiceId as string) || "tiffany"}
-                        onValueChange={(value) => saveVoice(value)}
-                        disabled={voiceSaving}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Choose a voice" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {VOICE_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.id} value={opt.id}>
-                              {opt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+              <Card className="bg-card/50 border-border">
+                <CardHeader>
+                  <CardTitle className="text-base font-display font-semibold flex items-center gap-2">
+                    <Mic className="h-4 w-4 text-primary" />
+                    Business Voice
+                  </CardTitle>
+                  <p className="text-sm text-muted-foreground font-normal">
+                    Voice callers hear on your public link (callcentral.io/shareable/{yandleHandle || "yourname"}).
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Select voice</Label>
+                    <Select
+                      value={(formData.voiceId as string) || "tiffany"}
+                      onValueChange={(value) => saveVoice(value)}
+                      disabled={voiceSaving}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Choose a voice" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {VOICE_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.id} value={opt.id}>
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     {voiceSaving && <p className="text-xs text-muted-foreground">Saving…</p>}
-                    </div>
-                  </CardContent>
-                </Card>
+                  </div>
+                </CardContent>
+              </Card>
 
-                <Card className="bg-card/50 border-border">
-                  <CardHeader>
-                    <CardTitle className="text-base font-display font-semibold flex items-center gap-2">
+              <Card className="bg-card/50 border-border">
+                <CardHeader>
+                  <CardTitle className="text-base font-display font-semibold flex items-center gap-2">
                     <MessageSquare className="h-4 w-4 text-primary" />
                     AI Persona
-                    </CardTitle>
+                  </CardTitle>
                   <p className="text-sm text-muted-foreground font-normal">
                     Instructions for how the AI should behave, what to say first, and its personality.
                   </p>
-                  </CardHeader>
+                </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label>Persona prompt</Label>
                     <Textarea
                       value={persona}
                       onChange={(e) => setPersona(e.target.value)}
-                      placeholder={`You are a helpful assistant for ${displayName || voxaHandle}. Greet callers warmly, answer their questions about services and bookings, and speak clearly and professionally.`}
+                      placeholder={`You are a helpful assistant for ${displayName || yandleHandle}. Greet callers warmly, answer their questions about services and bookings, and speak clearly and professionally.`}
                       className="min-h-[120px] bg-card/50 text-sm"
                     />
                     <p className="text-xs text-muted-foreground">
                       This sets the AI's opening instructions. Keep it concise — focus on tone, role, and key info.
                     </p>
-                        </div>
+                  </div>
                   <Button onClick={savePersona} disabled={personaSaving}>
                     {personaSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                     Save persona
                   </Button>
-                  </CardContent>
-                </Card>
+                </CardContent>
+              </Card>
             </motion.div>
           )}
 
@@ -2359,31 +2997,50 @@ const Dashboard = () => {
                         size="sm"
                         disabled={kbSaving}
                         onClick={async () => {
-                          const token = localStorage.getItem("voxa_id_token") || "";
+                          const token = localStorage.getItem("yandle_id_token") || "";
+                          const normalizedHandle = yandleHandle.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
+                          if (!normalizedHandle) {
+                            toast({ title: "Error", description: "Select a handle first.", variant: "destructive" });
+                            return;
+                          }
                           setKbSaving(true);
                           try {
                             const r = await fetch(`${apiBase}/handle`, {
                               method: "POST",
                               headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-                              body: JSON.stringify({ handle: voxaHandle, displayName: displayName || voxaHandle, knowledgeBaseCustomText }),
+                              body: JSON.stringify({ handle: normalizedHandle, displayName: displayName || yandleHandle, knowledgeBaseCustomText }),
                             });
                             if (r.ok) {
                               toast({ title: "Saved", description: "Triggering sync to voice agent…" });
                               const syncRes = await fetch(`${apiBase}/knowledge/sync`, {
                                 method: "POST",
                                 headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-                                body: JSON.stringify({ handle: voxaHandle }),
+                                body: JSON.stringify({ handle: normalizedHandle }),
                               });
-                              const syncData = syncRes.ok ? await syncRes.json() : null;
-                              if (syncData?.ok) {
+                              const syncText = await syncRes.text();
+                              let syncData: { ok?: boolean; message?: string; error?: string } | null = null;
+                              try {
+                                syncData = JSON.parse(syncText);
+                              } catch {
+                                /* non-JSON response */
+                              }
+                              if (syncRes.ok && syncData?.ok) {
                                 toast({ title: "Sync started", description: "Voice agent may take 2–5 minutes to reflect changes." });
                               } else {
-                                const msg = syncData?.message || "Sync failed.";
+                                const msg = syncData?.error || syncData?.message || "Sync failed.";
                                 const hint = msg.toLowerCase().includes("no knowledge base") ? " Save your profile in Settings once, then try again." : "";
                                 toast({ title: "Sync issue", description: msg + hint, variant: "destructive" });
                               }
                             } else {
-                              toast({ title: "Error", description: "Failed to save.", variant: "destructive" });
+                              const errBody = await r.text();
+                              let msg = "Failed to save.";
+                              try {
+                                const j = JSON.parse(errBody);
+                                msg = j.error || j.message || msg;
+                              } catch {
+                                if (errBody) msg = errBody.slice(0, 200);
+                              }
+                              toast({ title: "Error", description: msg, variant: "destructive" });
                             }
                           } finally {
                             setKbSaving(false);
@@ -2398,13 +3055,18 @@ const Dashboard = () => {
                         size="sm"
                         disabled={kbSyncing}
                         onClick={async () => {
-                          const token = localStorage.getItem("voxa_id_token") || "";
+                          const token = localStorage.getItem("yandle_id_token") || "";
+                          const normalizedHandle = yandleHandle.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
+                          if (!normalizedHandle) {
+                            toast({ title: "Error", description: "Select a handle first.", variant: "destructive" });
+                            return;
+                          }
                           setKbSyncing(true);
                           try {
                             const r = await fetch(`${apiBase}/knowledge/sync`, {
                               method: "POST",
                               headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-                              body: JSON.stringify({ handle: voxaHandle }),
+                              body: JSON.stringify({ handle: normalizedHandle }),
                             });
                             const data = r.ok ? await r.json() : null;
                             if (data?.ok) {
@@ -2424,7 +3086,7 @@ const Dashboard = () => {
                       </Button>
                     </div>
                   </div>
-                    </CardHeader>
+                </CardHeader>
                 <CardContent className="space-y-6">
 
                   {/* ── Gaming café: centers & machines ──────────────── */}
@@ -2443,11 +3105,11 @@ const Dashboard = () => {
                               )}
                             </span>
                             <Button variant="ghost" size="sm" className="text-destructive" onClick={async () => {
-                              const token = localStorage.getItem("voxa_id_token") || "";
-                              const r = await fetch(`${apiBase}/centers?handle=${encodeURIComponent(voxaHandle)}`, {
+                              const token = localStorage.getItem("yandle_id_token") || "";
+                              const r = await fetch(`${apiBase}/centers?handle=${encodeURIComponent(yandleHandle)}`, {
                                 method: "DELETE",
                                 headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-                                body: JSON.stringify({ handle: voxaHandle, centerId: c.centerId }),
+                                body: JSON.stringify({ handle: yandleHandle, centerId: c.centerId }),
                               });
                               if (r.ok) setCentersList((prev) => prev.filter((x: any) => x.centerId !== c.centerId));
                             }}>
@@ -2463,13 +3125,13 @@ const Dashboard = () => {
                         <Input type="number" min={1} placeholder="Count" value={newCenterMachineCount} onChange={(e) => setNewCenterMachineCount(Number(e.target.value) || 1)} className="w-20" />
                         <Input type="number" min={0} placeholder="₹/hr" value={newCenterPricePerHour} onChange={(e) => setNewCenterPricePerHour(Number(e.target.value) || 0)} className="w-20" />
                         <Button size="sm" disabled={addingCenter || !newCenterName.trim()} onClick={async () => {
-                          const token = localStorage.getItem("voxa_id_token") || "";
+                          const token = localStorage.getItem("yandle_id_token") || "";
                           setAddingCenter(true);
                           try {
                             const r = await fetch(`${apiBase}/centers`, {
                               method: "POST",
                               headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-                              body: JSON.stringify({ handle: voxaHandle, name: newCenterName.trim(), location: newCenterLocation.trim(), machines: [{ name: newCenterMachineType, type: newCenterMachineType, count: newCenterMachineCount, pricePerHour: newCenterPricePerHour }] }),
+                              body: JSON.stringify({ handle: yandleHandle, name: newCenterName.trim(), location: newCenterLocation.trim(), machines: [{ name: newCenterMachineType, type: newCenterMachineType, count: newCenterMachineCount, pricePerHour: newCenterPricePerHour }] }),
                             });
                             if (r.ok) {
                               const d = await r.json();
@@ -2481,7 +3143,7 @@ const Dashboard = () => {
                         }}>
                           {addingCenter ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Add center
                         </Button>
-              </div>
+                      </div>
                     </div>
                   )}
 
@@ -2496,13 +3158,13 @@ const Dashboard = () => {
                             <li key={b.branchId} className="flex items-center justify-between rounded-lg border border-border p-3 text-sm">
                               <span><strong>{b.name || b.branchId}</strong> · Capacity {b.capacity ?? 1}{b.location ? ` · ${b.location}` : ""}</span>
                               <Button variant="ghost" size="sm" className="text-destructive" disabled={deletingBranchId === b.branchId} onClick={async () => {
-                                const token = localStorage.getItem("voxa_id_token") || "";
+                                const token = localStorage.getItem("yandle_id_token") || "";
                                 setDeletingBranchId(b.branchId);
                                 try {
                                   const r = await fetch(`${apiBase}/branches`, {
                                     method: "DELETE",
                                     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-                                    body: JSON.stringify({ handle: voxaHandle, branchId: b.branchId }),
+                                    body: JSON.stringify({ handle: yandleHandle, branchId: b.branchId }),
                                   });
                                   if (r.ok) setBranchesList((prev) => prev.filter((x: any) => x.branchId !== b.branchId));
                                 } finally { setDeletingBranchId(null); }
@@ -2516,13 +3178,13 @@ const Dashboard = () => {
                           <Input placeholder="Branch name" value={newBranchName} onChange={(e) => setNewBranchName(e.target.value)} className="w-40" />
                           <Input type="number" min={1} placeholder="Capacity" value={newBranchCapacity} onChange={(e) => setNewBranchCapacity(Number(e.target.value) || 1)} className="w-24" />
                           <Button size="sm" disabled={addingBranch || !newBranchName.trim()} onClick={async () => {
-                            const token = localStorage.getItem("voxa_id_token") || "";
+                            const token = localStorage.getItem("yandle_id_token") || "";
                             setAddingBranch(true);
                             try {
                               const r = await fetch(`${apiBase}/branches`, {
                                 method: "POST",
                                 headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-                                body: JSON.stringify({ handle: voxaHandle, name: newBranchName.trim(), capacity: newBranchCapacity }),
+                                body: JSON.stringify({ handle: yandleHandle, name: newBranchName.trim(), capacity: newBranchCapacity }),
                               });
                               if (r.ok) {
                                 const d = await r.json();
@@ -2545,13 +3207,13 @@ const Dashboard = () => {
                             <li key={s.serviceId} className="flex items-center justify-between rounded-lg border border-border p-3 text-sm">
                               <span><strong>{s.name || s.serviceId}</strong> · {s.durationMinutes ?? 0} min{s.priceCents != null ? ` · ₹${(s.priceCents / 100).toFixed(0)}` : ""}</span>
                               <Button variant="ghost" size="sm" className="text-destructive" disabled={deletingServiceId === s.serviceId} onClick={async () => {
-                                const token = localStorage.getItem("voxa_id_token") || "";
+                                const token = localStorage.getItem("yandle_id_token") || "";
                                 setDeletingServiceId(s.serviceId);
                                 try {
                                   const r = await fetch(`${apiBase}/services`, {
                                     method: "DELETE",
                                     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-                                    body: JSON.stringify({ handle: voxaHandle, serviceId: s.serviceId }),
+                                    body: JSON.stringify({ handle: yandleHandle, serviceId: s.serviceId }),
                                   });
                                   if (r.ok) setServicesList((prev) => prev.filter((x: any) => x.serviceId !== s.serviceId));
                                 } finally { setDeletingServiceId(null); }
@@ -2566,14 +3228,14 @@ const Dashboard = () => {
                           <Input type="number" min={1} placeholder="Minutes" value={newServiceDuration} onChange={(e) => setNewServiceDuration(Number(e.target.value) || 30)} className="w-24" />
                           <Input placeholder="Price (₹)" value={newServicePrice} onChange={(e) => setNewServicePrice(e.target.value)} className="w-24" />
                           <Button size="sm" disabled={addingService || !newServiceName.trim()} onClick={async () => {
-                            const token = localStorage.getItem("voxa_id_token") || "";
+                            const token = localStorage.getItem("yandle_id_token") || "";
                             setAddingService(true);
                             try {
                               const priceNum = newServicePrice.trim() ? Number(newServicePrice) : undefined;
                               const r = await fetch(`${apiBase}/services`, {
                                 method: "POST",
                                 headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-                                body: JSON.stringify({ handle: voxaHandle, name: newServiceName.trim(), durationMinutes: newServiceDuration, priceCents: priceNum != null && !isNaN(priceNum) ? Math.round(priceNum * 100) : undefined, useCaseId: "salon" }),
+                                body: JSON.stringify({ handle: yandleHandle, name: newServiceName.trim(), durationMinutes: newServiceDuration, priceCents: priceNum != null && !isNaN(priceNum) ? Math.round(priceNum * 100) : undefined, useCaseId: "salon" }),
                               });
                               if (r.ok) {
                                 const d = await r.json();
@@ -2600,13 +3262,13 @@ const Dashboard = () => {
                             <li key={d.doctorId} className="flex items-center justify-between rounded-lg border border-border p-3 text-sm">
                               <span><strong>{d.name || d.doctorId}</strong>{d.specialty ? ` · ${d.specialty}` : ""}</span>
                               <Button variant="ghost" size="sm" className="text-destructive" disabled={deletingDoctorId === d.doctorId} onClick={async () => {
-                                const token = localStorage.getItem("voxa_id_token") || "";
+                                const token = localStorage.getItem("yandle_id_token") || "";
                                 setDeletingDoctorId(d.doctorId);
                                 try {
                                   const r = await fetch(`${apiBase}/doctors`, {
                                     method: "DELETE",
                                     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-                                    body: JSON.stringify({ handle: voxaHandle, doctorId: d.doctorId }),
+                                    body: JSON.stringify({ handle: yandleHandle, doctorId: d.doctorId }),
                                   });
                                   if (r.ok) setDoctorsList((prev) => prev.filter((x: any) => x.doctorId !== d.doctorId));
                                 } finally { setDeletingDoctorId(null); }
@@ -2620,13 +3282,13 @@ const Dashboard = () => {
                           <Input placeholder="Doctor name" value={newDoctorName} onChange={(e) => setNewDoctorName(e.target.value)} className="w-36" />
                           <Input placeholder="Specialty" value={newDoctorSpecialty} onChange={(e) => setNewDoctorSpecialty(e.target.value)} className="w-32" />
                           <Button size="sm" disabled={addingDoctor || !newDoctorName.trim()} onClick={async () => {
-                            const token = localStorage.getItem("voxa_id_token") || "";
+                            const token = localStorage.getItem("yandle_id_token") || "";
                             setAddingDoctor(true);
                             try {
                               const r = await fetch(`${apiBase}/doctors`, {
                                 method: "POST",
                                 headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-                                body: JSON.stringify({ handle: voxaHandle, name: newDoctorName.trim(), specialty: newDoctorSpecialty.trim() || undefined }),
+                                body: JSON.stringify({ handle: yandleHandle, name: newDoctorName.trim(), specialty: newDoctorSpecialty.trim() || undefined }),
                               });
                               if (r.ok) {
                                 const d = await r.json();
@@ -2648,13 +3310,13 @@ const Dashboard = () => {
                             <li key={l.locationId} className="flex items-center justify-between rounded-lg border border-border p-3 text-sm">
                               <span><strong>{l.name || l.locationId}</strong>{l.address ? ` · ${l.address}` : ""}</span>
                               <Button variant="ghost" size="sm" className="text-destructive" disabled={deletingLocationId === l.locationId} onClick={async () => {
-                                const token = localStorage.getItem("voxa_id_token") || "";
+                                const token = localStorage.getItem("yandle_id_token") || "";
                                 setDeletingLocationId(l.locationId);
                                 try {
                                   const r = await fetch(`${apiBase}/locations`, {
                                     method: "DELETE",
                                     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-                                    body: JSON.stringify({ handle: voxaHandle, locationId: l.locationId }),
+                                    body: JSON.stringify({ handle: yandleHandle, locationId: l.locationId }),
                                   });
                                   if (r.ok) setLocationsList((prev) => prev.filter((x: any) => x.locationId !== l.locationId));
                                 } finally { setDeletingLocationId(null); }
@@ -2668,13 +3330,13 @@ const Dashboard = () => {
                           <Input placeholder="Location name" value={newLocationName} onChange={(e) => setNewLocationName(e.target.value)} className="w-36" />
                           <Input placeholder="Address" value={newLocationAddress} onChange={(e) => setNewLocationAddress(e.target.value)} className="w-40" />
                           <Button size="sm" disabled={addingLocation || !newLocationName.trim()} onClick={async () => {
-                            const token = localStorage.getItem("voxa_id_token") || "";
+                            const token = localStorage.getItem("yandle_id_token") || "";
                             setAddingLocation(true);
                             try {
                               const r = await fetch(`${apiBase}/locations`, {
                                 method: "POST",
                                 headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-                                body: JSON.stringify({ handle: voxaHandle, name: newLocationName.trim(), address: newLocationAddress.trim() || undefined }),
+                                body: JSON.stringify({ handle: yandleHandle, name: newLocationName.trim(), address: newLocationAddress.trim() || undefined }),
                               });
                               if (r.ok) {
                                 const d = await r.json();
@@ -2696,13 +3358,13 @@ const Dashboard = () => {
                             <li key={s.serviceId} className="flex items-center justify-between rounded-lg border border-border p-3 text-sm">
                               <span><strong>{s.name || s.serviceId}</strong> · {s.durationMinutes ?? 0} min{s.priceCents != null ? ` · ₹${(s.priceCents / 100).toFixed(0)}` : ""}</span>
                               <Button variant="ghost" size="sm" className="text-destructive" disabled={deletingServiceId === s.serviceId} onClick={async () => {
-                                const token = localStorage.getItem("voxa_id_token") || "";
+                                const token = localStorage.getItem("yandle_id_token") || "";
                                 setDeletingServiceId(s.serviceId);
                                 try {
                                   const r = await fetch(`${apiBase}/services`, {
                                     method: "DELETE",
                                     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-                                    body: JSON.stringify({ handle: voxaHandle, serviceId: s.serviceId }),
+                                    body: JSON.stringify({ handle: yandleHandle, serviceId: s.serviceId }),
                                   });
                                   if (r.ok) setServicesList((prev) => prev.filter((x: any) => x.serviceId !== s.serviceId));
                                 } finally { setDeletingServiceId(null); }
@@ -2717,14 +3379,14 @@ const Dashboard = () => {
                           <Input type="number" min={1} placeholder="Minutes" value={newServiceDuration} onChange={(e) => setNewServiceDuration(Number(e.target.value) || 30)} className="w-24" />
                           <Input placeholder="Price (₹)" value={newServicePrice} onChange={(e) => setNewServicePrice(e.target.value)} className="w-24" />
                           <Button size="sm" disabled={addingService || !newServiceName.trim()} onClick={async () => {
-                            const token = localStorage.getItem("voxa_id_token") || "";
+                            const token = localStorage.getItem("yandle_id_token") || "";
                             setAddingService(true);
                             try {
                               const priceNum = newServicePrice.trim() ? Number(newServicePrice) : undefined;
                               const r = await fetch(`${apiBase}/services`, {
                                 method: "POST",
                                 headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-                                body: JSON.stringify({ handle: voxaHandle, name: newServiceName.trim(), durationMinutes: newServiceDuration, priceCents: priceNum != null && !isNaN(priceNum) ? Math.round(priceNum * 100) : undefined, useCaseId: "clinic" }),
+                                body: JSON.stringify({ handle: yandleHandle, name: newServiceName.trim(), durationMinutes: newServiceDuration, priceCents: priceNum != null && !isNaN(priceNum) ? Math.round(priceNum * 100) : undefined, useCaseId: "clinic" }),
                               });
                               if (r.ok) {
                                 const d = await r.json();
@@ -2753,11 +3415,11 @@ const Dashboard = () => {
                         size="sm"
                         disabled={kbPreviewLoading}
                         onClick={async () => {
-                          if (!apiBase || !voxaHandle) return;
+                          if (!apiBase || !yandleHandle) return;
                           setKbPreviewLoading(true);
                           try {
-                            const token = localStorage.getItem("voxa_id_token") || "";
-                            const r = await fetch(`${apiBase}/knowledge/preview?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } });
+                            const token = localStorage.getItem("yandle_id_token") || "";
+                            const r = await fetch(`${apiBase}/knowledge/preview?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } });
                             const d = r.ok ? await r.json() : null;
                             if (d?.content) setKbPreviewText(d.content);
                           } finally { setKbPreviewLoading(false); }
@@ -2791,7 +3453,7 @@ const Dashboard = () => {
                       onChange={(e) => setKnowledgeBaseCustomText(e.target.value)}
                       className="min-h-[120px] bg-card/50 font-mono text-sm"
                     />
-                        </div>
+                  </div>
 
                   {/* ── Upload image to extract text ─────────────────── */}
                   <div className="space-y-2 pt-4 border-t border-border">
@@ -2803,7 +3465,7 @@ const Dashboard = () => {
                       className="block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-primary file:text-primary-foreground"
                       onChange={async (e) => {
                         const file = e.target.files?.[0];
-                        if (!file || !apiBase || !voxaHandle) return;
+                        if (!file || !apiBase || !yandleHandle) return;
                         setIngestImageLoading(true);
                         setExtractedTextFromImage("");
                         try {
@@ -2811,11 +3473,11 @@ const Dashboard = () => {
                           reader.onload = async () => {
                             const base64 = (reader.result as string)?.split(",")?.[1];
                             if (!base64) { setIngestImageLoading(false); return; }
-                            const token = localStorage.getItem("voxa_id_token") || "";
+                            const token = localStorage.getItem("yandle_id_token") || "";
                             const r = await fetch(`${apiBase}/knowledge/ingest-image`, {
                               method: "POST",
                               headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-                              body: JSON.stringify({ handle: voxaHandle, imageBase64: base64 }),
+                              body: JSON.stringify({ handle: yandleHandle, imageBase64: base64 }),
                             });
                             const data = r.ok ? await r.json() : null;
                             if (data?.ok && data.extractedText) {
@@ -2852,7 +3514,7 @@ const Dashboard = () => {
                       disabled={uploadFileLoading}
                       onChange={async (e) => {
                         const file = e.target.files?.[0];
-                        if (!file || !apiBase || !voxaHandle) return;
+                        if (!file || !apiBase || !yandleHandle) return;
                         if (file.size > 5 * 1024 * 1024) {
                           toast({ title: "File too large", description: "Keep files under 5MB.", variant: "destructive" });
                           e.target.value = ""; return;
@@ -2866,17 +3528,17 @@ const Dashboard = () => {
                             reader.readAsDataURL(file);
                           });
                           if (!base64) throw new Error("Could not read file");
-                          const token = localStorage.getItem("voxa_id_token") || "";
+                          const token = localStorage.getItem("yandle_id_token") || "";
                           const r = await fetch(`${apiBase}/knowledge/upload-file`, {
                             method: "POST",
                             headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-                            body: JSON.stringify({ handle: voxaHandle, fileBase64: base64, fileName: file.name }),
+                            body: JSON.stringify({ handle: yandleHandle, fileBase64: base64, fileName: file.name }),
                           });
                           const data = r.ok ? await r.json() : null;
                           if (data?.ok) {
                             toast({ title: "Uploaded", description: data.message ?? "File uploaded; sync started." });
                             // Refresh file list
-                            fetch(`${apiBase}/knowledge/files?handle=${encodeURIComponent(voxaHandle)}`, { headers: { authorization: `Bearer ${token}` } })
+                            fetch(`${apiBase}/knowledge/files?handle=${encodeURIComponent(yandleHandle)}`, { headers: { authorization: `Bearer ${token}` } })
                               .then((fr) => (fr.ok ? fr.json() : null))
                               .then((fd) => setKbFiles(Array.isArray(fd?.files) ? fd.files : []))
                               .catch(() => {});
@@ -2913,10 +3575,10 @@ const Dashboard = () => {
                               className="text-destructive shrink-0"
                               disabled={deletingFileKey === f.key}
                               onClick={async () => {
-                                const token = localStorage.getItem("voxa_id_token") || "";
+                                const token = localStorage.getItem("yandle_id_token") || "";
                                 setDeletingFileKey(f.key);
                                 try {
-                                  const r = await fetch(`${apiBase}/knowledge/files?handle=${encodeURIComponent(voxaHandle)}&key=${encodeURIComponent(f.key)}`, {
+                                  const r = await fetch(`${apiBase}/knowledge/files?handle=${encodeURIComponent(yandleHandle)}&key=${encodeURIComponent(f.key)}`, {
                                     method: "DELETE",
                                     headers: { authorization: `Bearer ${token}` },
                                   });
@@ -2936,9 +3598,9 @@ const Dashboard = () => {
                     {!kbFilesLoading && kbFiles.length === 0 && !uploadFileLoading && (
                       <p className="text-xs text-muted-foreground italic">No files uploaded yet.</p>
                     )}
-                    </div>
-                  </CardContent>
-                </Card>
+                  </div>
+                </CardContent>
+              </Card>
             </motion.div>
           )}
 
@@ -2949,11 +3611,11 @@ const Dashboard = () => {
               transition={{ duration: 0.3 }}
               className="space-y-6 max-w-2xl"
             >
-                <Card className="bg-card/50 border-border">
-                  <CardHeader>
+              <Card className="bg-card/50 border-border">
+                <CardHeader>
                   <CardTitle className="font-display text-xl">Embed on your site</CardTitle>
                   <p className="text-sm text-muted-foreground">Add a chat & voice bubble to any website with a single script tag. Paste it before the closing &lt;/body&gt; tag.</p>
-                  </CardHeader>
+                </CardHeader>
                 <CardContent className="space-y-6">
                   {/* Theme configurator */}
                   <div className="space-y-4">
@@ -2970,7 +3632,7 @@ const Dashboard = () => {
                           />
                           <Input value={embedColor} onChange={(e) => setEmbedColor(e.target.value)} className="flex-1 font-mono text-sm" maxLength={7} />
                         </div>
-                        </div>
+                      </div>
                       <div className="space-y-1">
                         <Label className="text-sm">Background color</Label>
                         <div className="flex items-center gap-2">
@@ -2981,7 +3643,7 @@ const Dashboard = () => {
                             className="h-9 w-14 rounded border border-border cursor-pointer bg-transparent p-0.5"
                           />
                           <Input value={embedBg} onChange={(e) => setEmbedBg(e.target.value)} className="flex-1 font-mono text-sm" maxLength={7} />
-                      </div>
+                        </div>
                       </div>
                       <div className="space-y-1">
                         <Label className="text-sm">Position</Label>
@@ -3004,14 +3666,14 @@ const Dashboard = () => {
                   <div className="space-y-2">
                     <Label className="text-base">Your snippet</Label>
                     <pre className="rounded-lg border border-border bg-muted/50 p-3 text-xs overflow-x-auto whitespace-pre-wrap font-mono break-all">
-{`<script src="${typeof window !== "undefined" ? window.location.origin : "https://your-app.com"}/voxa-embed.js" data-handle="${voxaHandle || "YOUR_HANDLE"}" data-origin="${typeof window !== "undefined" ? window.location.origin : "https://your-app.com"}" data-color="${embedColor}" data-bg="${embedBg}" data-position="${embedPosition}" data-label="${embedLabel}"></script>`}
+{`<script src="${typeof window !== "undefined" ? window.location.origin : "https://your-app.com"}/voxa-embed.js" data-handle="${yandleHandle || "YOUR_HANDLE"}" data-origin="${typeof window !== "undefined" ? window.location.origin : "https://your-app.com"}" data-color="${embedColor}" data-bg="${embedBg}" data-position="${embedPosition}" data-label="${embedLabel}"></script>`}
                     </pre>
                     <Button
                       variant="outline"
                       size="sm"
                       className="gap-2"
                       onClick={() => {
-                        const snippet = `<script src="${window.location.origin}/voxa-embed.js" data-handle="${voxaHandle || ""}" data-origin="${window.location.origin}" data-color="${embedColor}" data-bg="${embedBg}" data-position="${embedPosition}" data-label="${embedLabel}"></script>`;
+                        const snippet = `<script src="${window.location.origin}/voxa-embed.js" data-handle="${yandleHandle || ""}" data-origin="${window.location.origin}" data-color="${embedColor}" data-bg="${embedBg}" data-position="${embedPosition}" data-label="${embedLabel}"></script>`;
                         navigator.clipboard.writeText(snippet)
                           .then(() => toast({ title: "Copied!", description: "Snippet copied to clipboard." }))
                           .catch(() => toast({ title: "Copy failed", variant: "destructive" }));
@@ -3037,7 +3699,7 @@ const Dashboard = () => {
                           toast({ title: "Test closed" });
                           return;
                         }
-                        if (!voxaHandle?.trim()) {
+                        if (!yandleHandle?.trim()) {
                           toast({ title: "No handle", description: "Save your profile first.", variant: "destructive" });
                           return;
                         }
@@ -3046,7 +3708,7 @@ const Dashboard = () => {
                         // Inject a fresh copy of voxa-embed.js as a script tag with the current settings
                         const script = document.createElement("script");
                         script.id = "voxa-embed-test-script";
-                        script.setAttribute("data-handle", voxaHandle);
+                        script.setAttribute("data-handle", yandleHandle);
                         script.setAttribute("data-color", embedColor);
                         script.setAttribute("data-bg", embedBg);
                         script.setAttribute("data-position", embedPosition);
@@ -3066,8 +3728,8 @@ const Dashboard = () => {
                       Test on this page
                     </Button>
                   </div>
-                  </CardContent>
-                </Card>
+                </CardContent>
+              </Card>
             </motion.div>
           )}
 
@@ -3086,12 +3748,12 @@ const Dashboard = () => {
                       <p className="text-sm text-muted-foreground mt-1">
                         Customize your public website at{" "}
                         <a
-                          href={`https://yandle.io/${voxaHandle}`}
+                          href={`https://callcentral.io/${yandleHandle}`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-primary hover:underline font-medium"
                         >
-                          yandle.io/{voxaHandle}
+                          callcentral.io/{yandleHandle}
                         </a>
                       </p>
                     </div>
@@ -3099,15 +3761,15 @@ const Dashboard = () => {
                       size="sm"
                       disabled={websiteSaving}
                       onClick={async () => {
-                        if (!apiBase || !voxaHandle) return;
+                        if (!apiBase || !yandleHandle) return;
                         setWebsiteSaving(true);
                         try {
-                          const token = localStorage.getItem("voxa_id_token") || "";
+                          const token = localStorage.getItem("yandle_id_token") || "";
                           const r = await fetch(`${apiBase}/website/config`, {
                             method: "POST",
                             headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
                             body: JSON.stringify({
-                              handle: voxaHandle,
+                              handle: yandleHandle,
                               heroTagline: websiteHeroTagline,
                               aboutText: websiteAboutText,
                               galleryImages: websiteGalleryImages,
@@ -3203,7 +3865,7 @@ const Dashboard = () => {
                             className="absolute top-1 right-1 bg-black/60 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                           >
                             <X className="h-3 w-3" />
-                        </button>
+                          </button>
                         </div>
                       ))}
                       {/* Upload button */}
@@ -3223,15 +3885,15 @@ const Dashboard = () => {
                           disabled={websiteImageUploading}
                           onChange={async (e) => {
                             const file = e.target.files?.[0];
-                            if (!file || !apiBase || !voxaHandle) return;
+                            if (!file || !apiBase || !yandleHandle) return;
                             setWebsiteImageUploading(true);
                             try {
-                              const token = localStorage.getItem("voxa_id_token") || "";
+                              const token = localStorage.getItem("yandle_id_token") || "";
                               // Get presigned upload URL
                               const presignResp = await fetch(`${apiBase}/website/upload-image`, {
                                 method: "POST",
                                 headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-                                body: JSON.stringify({ handle: voxaHandle, fileName: file.name, contentType: file.type }),
+                                body: JSON.stringify({ handle: yandleHandle, fileName: file.name, contentType: file.type }),
                               });
                               if (!presignResp.ok) throw new Error("Failed to get upload URL");
                               const { uploadUrl, publicUrl } = await presignResp.json();
@@ -3263,10 +3925,124 @@ const Dashboard = () => {
                     <Button
                       variant="outline"
                       className="gap-2"
-                      onClick={() => window.open(`/${voxaHandle}`, "_blank")}
+                      onClick={() => window.open(`/${yandleHandle}`, "_blank")}
                     >
                       <ExternalLink className="h-4 w-4" />
                       Preview website
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* AI Website Assistant */}
+              <Card className="bg-card/50 border-border">
+                <CardHeader>
+                  <CardTitle className="text-base font-display font-semibold flex items-center gap-2">
+                    <MessageSquare className="h-4 w-4 text-primary" />
+                    AI Website Assistant
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">Ask the AI to help you write content, suggest changes, or improve your website.</p>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {/* Chat messages */}
+                  {websiteChatMessages.length > 0 && (
+                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {websiteChatMessages.map((msg, i) => (
+                        <div key={i} className={`text-sm p-3 rounded-lg ${msg.role === "user" ? "bg-primary/10 text-foreground ml-8" : "bg-secondary/30 text-foreground mr-8"}`}>
+                          <p className="whitespace-pre-wrap">{msg.text}</p>
+                          {msg.changes && Object.keys(msg.changes).length > 0 && (
+                            <div className="mt-2 pt-2 border-t border-border">
+                              <p className="text-xs text-muted-foreground mb-1">Suggested changes:</p>
+                              {Object.entries(msg.changes).map(([key, val]) => (
+                                <div key={key} className="flex items-center justify-between gap-2 text-xs py-1">
+                                  <span className="font-mono text-muted-foreground">{key}:</span>
+                                  <span className="truncate flex-1">{String(val).slice(0, 60)}</span>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-6 text-xs px-2"
+                                    onClick={() => {
+                                      if (key === "heroTagline") setWebsiteHeroTagline(String(val));
+                                      else if (key === "aboutText") setWebsiteAboutText(String(val));
+                                      else if (key === "colorTheme") setWebsiteColorTheme(String(val));
+                                      else if (key === "contactEmail") setWebsiteContactEmail(String(val));
+                                      toast({ title: "Applied", description: `Updated ${key}. Save to publish.` });
+                                    }}
+                                  >
+                                    Apply
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <Input
+                      value={websiteChatInput}
+                      onChange={(e) => setWebsiteChatInput(e.target.value)}
+                      placeholder="e.g. Write a professional tagline for my salon..."
+                      className="bg-card/50"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey && websiteChatInput.trim() && !websiteChatLoading) {
+                          e.preventDefault();
+                          const userMsg = websiteChatInput.trim();
+                          setWebsiteChatInput("");
+                          setWebsiteChatMessages((prev) => [...prev, { role: "user", text: userMsg }]);
+                          setWebsiteChatLoading(true);
+                          const token = localStorage.getItem("yandle_id_token") || "";
+                          fetch(`${apiBase}/website/chat`, {
+                            method: "POST",
+                            headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+                            body: JSON.stringify({
+                              handle: yandleHandle,
+                              message: userMsg,
+                              currentConfig: { heroTagline: websiteHeroTagline, aboutText: websiteAboutText, colorTheme: websiteColorTheme, contactEmail: websiteContactEmail },
+                            }),
+                          })
+                            .then((r) => r.json())
+                            .then((data) => {
+                              setWebsiteChatMessages((prev) => [...prev, { role: "ai", text: data.reply || "Sorry, I couldn't generate a response.", changes: data.suggestedChanges }]);
+                            })
+                            .catch(() => {
+                              setWebsiteChatMessages((prev) => [...prev, { role: "ai", text: "Sorry, something went wrong." }]);
+                            })
+                            .finally(() => setWebsiteChatLoading(false));
+                        }
+                      }}
+                    />
+                    <Button
+                      size="sm"
+                      disabled={websiteChatLoading || !websiteChatInput.trim()}
+                      onClick={() => {
+                        const userMsg = websiteChatInput.trim();
+                        if (!userMsg) return;
+                        setWebsiteChatInput("");
+                        setWebsiteChatMessages((prev) => [...prev, { role: "user", text: userMsg }]);
+                        setWebsiteChatLoading(true);
+                        const token = localStorage.getItem("yandle_id_token") || "";
+                        fetch(`${apiBase}/website/chat`, {
+                          method: "POST",
+                          headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+                          body: JSON.stringify({
+                            handle: yandleHandle,
+                            message: userMsg,
+                            currentConfig: { heroTagline: websiteHeroTagline, aboutText: websiteAboutText, colorTheme: websiteColorTheme, contactEmail: websiteContactEmail },
+                          }),
+                        })
+                          .then((r) => r.json())
+                          .then((data) => {
+                            setWebsiteChatMessages((prev) => [...prev, { role: "ai", text: data.reply || "Sorry, I couldn't generate a response.", changes: data.suggestedChanges }]);
+                          })
+                          .catch(() => {
+                            setWebsiteChatMessages((prev) => [...prev, { role: "ai", text: "Sorry, something went wrong." }]);
+                          })
+                          .finally(() => setWebsiteChatLoading(false));
+                      }}
+                    >
+                      {websiteChatLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Send"}
                     </Button>
                   </div>
                 </CardContent>
@@ -3293,7 +4069,7 @@ const Dashboard = () => {
                 </CardHeader>
                 <CardContent className="space-y-6">
                   {/* Add manager */}
-                    <div className="space-y-2">
+                  <div className="space-y-2">
                     <Label>Invite manager by email</Label>
                     <div className="flex gap-2">
                       <Input
@@ -3307,19 +4083,19 @@ const Dashboard = () => {
                       <Button
                         disabled={addMemberLoading || !addMemberEmail.trim()}
                         onClick={async () => {
-                          if (!apiBase || !voxaHandle || !addMemberEmail.trim()) return;
+                          if (!apiBase || !yandleHandle || !addMemberEmail.trim()) return;
                           setAddMemberLoading(true);
                           try {
                             const r = await fetch(`${apiBase}/members`, {
                               method: "POST",
-                              headers: { "content-type": "application/json", authorization: `Bearer ${localStorage.getItem("voxa_id_token") || ""}` },
-                              body: JSON.stringify({ handle: voxaHandle, email: addMemberEmail.trim().toLowerCase() }),
+                              headers: { "content-type": "application/json", authorization: `Bearer ${localStorage.getItem("yandle_id_token") || ""}` },
+                              body: JSON.stringify({ handle: yandleHandle, email: addMemberEmail.trim().toLowerCase() }),
                             });
                             const data = r.ok ? await r.json() : null;
                             if (r.ok && data?.member) {
                               setMembersList((prev) => [...prev.filter((m) => m.email !== data.member.email), data.member]);
                               setAddMemberEmail("");
-                              toast({ title: "Manager added", description: `${data.member.email} can now manage ${voxaHandle}.` });
+                              toast({ title: "Manager added", description: `${data.member.email} can now manage ${yandleHandle}.` });
                             } else {
                               toast({ title: "Could not add manager", description: data?.error || "Unknown error", variant: "destructive" });
                             }
@@ -3355,12 +4131,12 @@ const Dashboard = () => {
                               type="button"
                               disabled={removingMember === m.email}
                               onClick={async () => {
-                                if (!apiBase || !voxaHandle) return;
+                                if (!apiBase || !yandleHandle) return;
                                 setRemovingMember(m.email);
                                 try {
-                                  const r = await fetch(`${apiBase}/members?handle=${encodeURIComponent(voxaHandle)}&email=${encodeURIComponent(m.email)}`, {
+                                  const r = await fetch(`${apiBase}/members?handle=${encodeURIComponent(yandleHandle)}&email=${encodeURIComponent(m.email)}`, {
                                     method: "DELETE",
-                                    headers: { authorization: `Bearer ${localStorage.getItem("voxa_id_token") || ""}` },
+                                    headers: { authorization: `Bearer ${localStorage.getItem("yandle_id_token") || ""}` },
                                   });
                                   if (r.ok) {
                                     setMembersList((prev) => prev.filter((x) => x.email !== m.email));
@@ -3381,7 +4157,7 @@ const Dashboard = () => {
                         ))}
                       </ul>
                     )}
-                    </div>
+                  </div>
                 </CardContent>
               </Card>
             </motion.div>
@@ -3518,17 +4294,17 @@ const Dashboard = () => {
               <Card className="bg-card/50 border-border">
                 <CardHeader>
                   <CardTitle className="font-display text-xl">Profile & AI setup</CardTitle>
-                  <p className="text-sm text-muted-foreground">Edit the same details you set during onboarding. Changes are saved locally and synced to your public Yandle link.</p>
+                  <p className="text-sm text-muted-foreground">Edit the same details you set during onboarding. Changes are saved locally and synced to your public YANDLE link.</p>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  {/* Yandle handle */}
+                  {/* YANDLE handle */}
                   <div className="space-y-2">
-                    <Label>Yandle handle</Label>
+                    <Label>YANDLE handle</Label>
                     <div className="flex rounded-lg border border-border bg-card/50 overflow-hidden focus-within:ring-2 focus-within:ring-ring">
-                      <span className="px-3 text-sm text-muted-foreground bg-secondary/50 h-10 flex items-center">yandle.io/</span>
+                      <span className="px-3 text-sm text-muted-foreground bg-secondary/50 h-10 flex items-center">callcentral.io/</span>
                       <Input
-                        value={voxaHandle}
-                        onChange={(e) => setVoxaHandle(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+                        value={yandleHandle}
+                        onChange={(e) => setYandleHandle(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
                         placeholder="yourname"
                         className="border-0 bg-transparent focus-visible:ring-0"
                       />
@@ -3541,7 +4317,7 @@ const Dashboard = () => {
                     <Input
                       value={displayName}
                       onChange={(e) => setDisplayName(e.target.value)}
-                      placeholder={voxaHandle ? voxaHandle.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Your Name"}
+                      placeholder={yandleHandle ? yandleHandle.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Your Name"}
                       className="bg-card/50"
                     />
                   </div>
@@ -3568,35 +4344,91 @@ const Dashboard = () => {
                     </div>
                   </div>
 
-                  {/* Slot / time window (per business) */}
+                  {/* Website toggle */}
                   <div className="space-y-4 pt-2 border-t border-border">
-                    <Label className="text-base">Slot & buffer</Label>
-                    <p className="text-xs text-muted-foreground">Slot granularity (e.g. 15 min) and buffer between appointments. Used for availability.</p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-2">
-                        <Label className="text-sm">Slot granularity (min)</Label>
-                        <Input
-                          type="number"
-                          min={1}
-                          max={120}
-                          value={slotConfig.slotGranularityMinutes ?? 15}
-                          onChange={(e) => setSlotConfig((p) => ({ ...p, slotGranularityMinutes: Math.max(1, Math.min(120, Number(e.target.value) || 15)) }))}
-                          className="bg-card/50"
-                        />
+                    <Label className="text-base">Website</Label>
+                    <div className="flex items-center justify-between rounded-lg border border-border p-3">
+                      <div className="flex-1">
+                        <Label htmlFor="website-enabled" className="cursor-pointer">Enable website</Label>
+                        <p className="text-xs text-muted-foreground">When disabled, callcentral.io/{yandleHandle} will redirect to the shareable link.</p>
                       </div>
-                      <div className="space-y-2">
-                        <Label className="text-sm">Buffer between (min)</Label>
-                        <Input
-                          type="number"
-                          min={0}
-                          max={60}
-                          value={slotConfig.bufferBetweenMinutes ?? 0}
-                          onChange={(e) => setSlotConfig((p) => ({ ...p, bufferBetweenMinutes: Math.max(0, Math.min(60, Number(e.target.value) || 0)) }))}
-                          className="bg-card/50"
-                        />
-                      </div>
+                      <Switch
+                        id="website-enabled"
+                        checked={formData.websiteEnabled !== false}
+                        onCheckedChange={(checked) => setFormData((p) => ({ ...p, websiteEnabled: checked }))}
+                      />
                     </div>
                   </div>
+
+                  {/* Slot & buffer — only for use cases with bookings (no slots for general / support tickets) */}
+                  {useCase?.id !== "general" && useCase?.id !== "customer_support" && (
+                    <div className="space-y-4 pt-2 border-t border-border">
+                      <Label className="text-base">Slot & buffer</Label>
+                      <p className="text-xs text-muted-foreground">Slot granularity (e.g. 15 min) and buffer between appointments. Used for availability.</p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-2">
+                          <Label className="text-sm">Slot granularity (min)</Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={120}
+                            value={slotConfig.slotGranularityMinutes ?? 15}
+                            onChange={(e) => setSlotConfig((p) => ({ ...p, slotGranularityMinutes: Math.max(1, Math.min(120, Number(e.target.value) || 15)) }))}
+                            className="bg-card/50"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-sm">Buffer between (min)</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={60}
+                            value={slotConfig.bufferBetweenMinutes ?? 0}
+                            onChange={(e) => setSlotConfig((p) => ({ ...p, bufferBetweenMinutes: Math.max(0, Math.min(60, Number(e.target.value) || 0)) }))}
+                            className="bg-card/50"
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-2">
+                          <Label className="text-sm">Business open (UTC hour)</Label>
+                          <Select
+                            value={String(slotConfig.openHour ?? 9)}
+                            onValueChange={(v) => setSlotConfig((p) => ({ ...p, openHour: Number(v) }))}
+                          >
+                            <SelectTrigger className="bg-card/50">
+                              <SelectValue placeholder="Open" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Array.from({ length: 24 }, (_, i) => (
+                                <SelectItem key={i} value={String(i)}>
+                                  {i === 0 ? "12 AM" : i < 12 ? `${i} AM` : i === 12 ? "12 PM" : `${i - 12} PM`}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-sm">Business close (UTC hour)</Label>
+                          <Select
+                            value={String(slotConfig.closeHour ?? 18)}
+                            onValueChange={(v) => setSlotConfig((p) => ({ ...p, closeHour: Number(v) }))}
+                          >
+                            <SelectTrigger className="bg-card/50">
+                              <SelectValue placeholder="Close" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Array.from({ length: 25 }, (_, i) => (
+                                <SelectItem key={i} value={String(i)}>
+                                  {i === 0 ? "12 AM" : i < 12 ? `${i} AM` : i === 12 ? "12 PM" : `${i - 12} PM`}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Salon: branches & services */}
                   {useCase?.id === "salon" && (

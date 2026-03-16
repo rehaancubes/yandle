@@ -5,6 +5,7 @@
 const AWS = require("aws-sdk");
 const lambda = new AWS.Lambda();
 const ddb = new AWS.DynamoDB.DocumentClient();
+const { getCallerFromEvent, assertAccess } = require("./auth-helper");
 
 const HANDLES_TABLE = process.env.HANDLES_TABLE;
 const SYNC_KNOWLEDGE_FUNCTION_ARN = process.env.SYNC_KNOWLEDGE_FUNCTION_ARN;
@@ -19,7 +20,7 @@ function normalizeHandle(raw) {
 
 exports.handler = async (event) => {
   try {
-    const sub = event?.requestContext?.authorizer?.jwt?.claims?.sub;
+    const { sub, email } = getCallerFromEvent(event);
     if (!sub) {
       return {
         statusCode: 401,
@@ -43,14 +44,22 @@ exports.handler = async (event) => {
         body: JSON.stringify({ error: "handle is required" }),
       };
     }
-    const getRes = await ddb.get({ TableName: HANDLES_TABLE, Key: { handle } }).promise();
-    const item = getRes.Item;
-    if (!item || item.ownerId !== sub) {
+    try {
+      await assertAccess(handle, sub, email);
+    } catch (e) {
+      if (e.message === "NOT_FOUND") {
+        return { statusCode: 404, headers: { "content-type": "application/json" }, body: JSON.stringify({ error: "Handle not found" }) };
+      }
       return {
         statusCode: 403,
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ error: "You do not own this handle." }),
+        body: JSON.stringify({ error: "You don't have access to this handle. Sign in with the account that owns it, or ask the owner to add you as a manager." }),
       };
+    }
+    const getRes = await ddb.get({ TableName: HANDLES_TABLE, Key: { handle } }).promise();
+    const item = getRes.Item;
+    if (!item) {
+      return { statusCode: 404, headers: { "content-type": "application/json" }, body: JSON.stringify({ error: "Handle not found" }) };
     }
     const needsCreateOrRepair = !item.knowledgeBaseId || !item.dataSourceId;
     if (needsCreateOrRepair && CREATE_KNOWLEDGE_BASE_FUNCTION_ARN) {

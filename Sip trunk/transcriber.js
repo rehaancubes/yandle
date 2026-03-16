@@ -307,16 +307,19 @@ app.get("/call-start", async (req, res) => {
 
   console.log(did, "=>", caller, "=>", uniqueid, "=>", direction);
 
+  // Store immediately so TCP (AudioSocket) can find metadata by UUID while we resolve DID
+  const startTime = new Date();
+  activeCalls.set(uniqueid, { did, caller, direction, org: null, startTime });
+
   let org = null;
   try {
     org = await getOrgByDid(did);
+    activeCalls.set(uniqueid, { did, caller, direction, org, startTime });
   } catch (err) {
     console.log("DB error:", err.message);
   }
 
   if (!org) console.log("⚠ Unknown DID:", did);
-
-  activeCalls.set(uniqueid, { did, caller, direction, org, startTime: new Date() });
 
   console.log(`📞 CALL EVENT | ${uniqueid}`);
   console.log(activeCalls.get(uniqueid));
@@ -408,11 +411,23 @@ const tcpServer = net.createServer((socket) => {
 
       console.log(`🆔 SESSION ${sessionIndex} → UUID ${uuid}`);
 
-      // Wait up to 2 s for HTTP metadata
+      // Wait up to 2 s for HTTP /call-start to store metadata
       for (let i = 0; i < 20; i++) {
         callInfo = activeCalls.get(uuid);
         if (callInfo) break;
         await sleep(100);
+      }
+
+      // If we have metadata but org not yet resolved (getOrgByDid still in progress), wait up to 3 s more
+      if (callInfo && callInfo.org === null) {
+        for (let i = 0; i < 30; i++) {
+          await sleep(100);
+          const updated = activeCalls.get(uuid);
+          if (updated && updated.org != null) {
+            callInfo = updated;
+            break;
+          }
+        }
       }
 
       if (!callInfo) {

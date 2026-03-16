@@ -7,6 +7,7 @@ import {
   Clock, Users, Sparkles, ArrowRight,
   Monitor, Glasses, Check, Menu, X,
   Trophy, Headphones, Wifi, Coffee,
+  Building2, Headset,
 } from "lucide-react";
 import heroBgAsset from "@/assets/hero-bg.jpg";
 
@@ -52,12 +53,16 @@ const useCaseIcons: Record<string, typeof Gamepad2> = {
   gaming_cafe: Gamepad2,
   salon: Scissors,
   clinic: Stethoscope,
+  general: Building2,
+  customer_support: Headset,
 };
 
 const useCaseDefaults: Record<string, { tagline: string; cta: string }> = {
   gaming_cafe: { tagline: "Level up your gaming experience", cta: "Book a Session" },
   salon: { tagline: "Your beauty, our passion", cta: "Book Appointment" },
   clinic: { tagline: "Quality healthcare, compassionate care", cta: "Book Appointment" },
+  general: { tagline: "How can we help you today?", cta: "Contact Us" },
+  customer_support: { tagline: "We're here to help", cta: "Get Support" },
 };
 
 const fadeUp = {
@@ -875,6 +880,11 @@ const BusinessWebsite = () => {
           return;
         }
         const json = await resp.json();
+        // Redirect to shareable link if website is disabled
+        if (json.profile?.websiteEnabled === false || json.websiteEnabled === false) {
+          navigate(`/shareable/${safeHandle}`, { replace: true });
+          return;
+        }
         setData({ handle: safeHandle, ...json });
       } catch {
         navigate("/", { replace: true });
@@ -1308,7 +1318,7 @@ const BusinessWebsite = () => {
             <p className="text-xs text-muted-foreground">
               Powered by{" "}
               <a href="/" className="text-gradient-primary font-semibold hover:underline">
-                Yandle
+                CallCentral
               </a>
             </p>
           </div>

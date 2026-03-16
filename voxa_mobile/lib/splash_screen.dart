@@ -15,7 +15,12 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   void initState() {
     super.initState();
-    _checkAuth();
+    _initAndCheckAuth();
+  }
+
+  Future<void> _initAndCheckAuth() async {
+    await AuthService.migrateStorageKeys();
+    await _checkAuth();
   }
 
   Future<void> _checkAuth() async {
@@ -26,7 +31,7 @@ class _SplashScreenState extends State<SplashScreen> {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute<void>(
         builder: (_) =>
-            authed ? const VoxaShell() : const AuthPage(),
+            authed ? const YandleShell() : const AuthPage(),
       ),
     );
   }

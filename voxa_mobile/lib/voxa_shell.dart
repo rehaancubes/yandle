@@ -15,14 +15,14 @@ import 'pages/calls_page.dart';
 import 'pages/discover_page.dart';
 import 'pages/profile_page.dart';
 
-class VoxaShell extends StatefulWidget {
-  const VoxaShell({super.key});
+class YandleShell extends StatefulWidget {
+  const YandleShell({super.key});
 
   @override
-  State<VoxaShell> createState() => _VoxaShellState();
+  State<YandleShell> createState() => _YandleShellState();
 }
 
-class _VoxaShellState extends State<VoxaShell> {
+class _YandleShellState extends State<YandleShell> {
   int _index = 0;
   bool _isAdminMode = false;
   String? _adminHandle;

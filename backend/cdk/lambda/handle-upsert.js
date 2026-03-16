@@ -1,6 +1,7 @@
 const AWS = require("aws-sdk");
 const ddb = new AWS.DynamoDB.DocumentClient();
 const lambda = new AWS.Lambda();
+const { getCallerFromEvent } = require("./auth-helper");
 
 function normalizeHandle(raw) {
   return String(raw || "")
@@ -41,7 +42,8 @@ exports.handler = async (event) => {
       };
     }
 
-    const callerSub = event?.requestContext?.authorizer?.jwt?.claims?.sub;
+    const { sub: callerSub, email: callerEmailRaw } = getCallerFromEvent(event);
+    const callerEmail = (callerEmailRaw || "").toLowerCase();
     if (!callerSub) {
       return {
         statusCode: 401,
@@ -59,12 +61,51 @@ exports.handler = async (event) => {
 
     const now = new Date().toISOString();
     const ownerId = existing.Item?.ownerId || callerSub;
-    if (existing.Item?.ownerId && existing.Item.ownerId !== callerSub) {
+    const existingOwnerId = existing.Item?.ownerId;
+    const existingOwnerEmail = (existing.Item?.ownerEmail || "").toString().trim().toLowerCase();
+    const isOwnerBySub = existingOwnerId && existingOwnerId === callerSub;
+    const isOwnerByEmail = callerEmail && existingOwnerEmail && existingOwnerEmail === callerEmail;
+    if (existing.Item && existingOwnerId && !isOwnerBySub && !isOwnerByEmail) {
       return {
         statusCode: 403,
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ error: "You do not own this handle." })
+        body: JSON.stringify({ error: "You don't have access to this handle. Sign in with the account that owns it, or ask the owner to add you as a manager." })
       };
+    }
+
+    // Enforce one business per email: on CREATE, check if this email already owns another handle
+    if (!existing.Item && callerEmail && process.env.HANDLES_TABLE && process.env.HANDLES_OWNER_EMAIL_INDEX) {
+      const emailCheck = await ddb.query({
+        TableName: process.env.HANDLES_TABLE,
+        IndexName: process.env.HANDLES_OWNER_EMAIL_INDEX,
+        KeyConditionExpression: "ownerEmail = :e",
+        ExpressionAttributeValues: { ":e": callerEmail },
+        Limit: 1
+      }).promise();
+      if (emailCheck.Items && emailCheck.Items.length > 0) {
+        return {
+          statusCode: 409,
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ error: `This email (${callerEmail}) already owns @${emailCheck.Items[0].handle}. Only one business per email is allowed.` })
+        };
+      }
+      // Also check if this email is already a member of another handle
+      if (process.env.MEMBERS_TABLE && process.env.MEMBERS_EMAIL_INDEX) {
+        const memberCheck = await ddb.query({
+          TableName: process.env.MEMBERS_TABLE,
+          IndexName: process.env.MEMBERS_EMAIL_INDEX,
+          KeyConditionExpression: "email = :e",
+          ExpressionAttributeValues: { ":e": callerEmail },
+          Limit: 1
+        }).promise();
+        if (memberCheck.Items && memberCheck.Items.length > 0) {
+          return {
+            statusCode: 409,
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ error: `This email is already a member of @${memberCheck.Items[0].handle}. Only one business per email is allowed.` })
+          };
+        }
+      }
     }
     const item = {
       handle,
@@ -72,7 +113,7 @@ exports.handler = async (event) => {
       voiceEnabled: body.voiceEnabled !== false,
       textEnabled: body.textEnabled !== false,
       voiceId: typeof body.voiceId === "string" && body.voiceId.trim() ? body.voiceId.trim() : (existing.Item?.voiceId || "tiffany"),
-      persona: body.persona || "Yandle assistant",
+      persona: body.persona || "YANDLE assistant",
       knowledgeSummary: body.knowledgeSummary || "",
       knowledgeBaseCustomText: body.knowledgeBaseCustomText != null ? String(body.knowledgeBaseCustomText) : (existing.Item?.knowledgeBaseCustomText ?? ""),
       // Optional business metadata for discovery + smart links
@@ -90,11 +131,13 @@ exports.handler = async (event) => {
       hasAiPhone: body.hasAiPhone ?? existing.Item?.hasAiPhone ?? false,
       hasWidget: body.hasWidget ?? existing.Item?.hasWidget ?? true,
       planTier: body.planTier || existing.Item?.planTier || "LISTING",
-      captureEmail: body.captureEmail ?? existing.Item?.captureEmail ?? ((body.useCaseId || existing.Item?.useCaseId) === 'gaming_cafe' ? false : true),
+      captureEmail: body.captureEmail ?? existing.Item?.captureEmail ?? false,
       capturePhone: body.capturePhone ?? existing.Item?.capturePhone ?? true,
+      websiteEnabled: body.websiteEnabled ?? existing.Item?.websiteEnabled ?? true,
       useCaseId: body.useCaseId || existing.Item?.useCaseId,
       knowledgeBaseId: typeof body.knowledgeBaseId === "string" ? body.knowledgeBaseId.trim() : (existing.Item?.knowledgeBaseId || ""),
       ownerId,
+      ownerEmail: callerEmail || existing.Item?.ownerEmail || undefined,
       updatedAt: now,
       createdAt: existing.Item?.createdAt || body.createdAt || now
     };
@@ -106,8 +149,8 @@ exports.handler = async (event) => {
       })
       .promise();
 
-    // Initialize credits for new handles
-    if (!existing.Item && process.env.CREDITS_TABLE) {
+    // Initialize credits for new handles or backfill for existing handles missing a credits record
+    if (process.env.CREDITS_TABLE) {
       try {
         await ddb.put({
           TableName: process.env.CREDITS_TABLE,

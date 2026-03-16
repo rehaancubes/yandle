@@ -59,17 +59,18 @@ function buildKnowledgeDocument(handle, profile, branches, services, doctors, lo
   // Slot granularity and buffer are internal (used by booking tools only). Do not add to KB so the agent never mentions them to callers.
 
   if (branches && branches.length > 0) {
-    lines.push("\n--- Branches / locations ---");
+    lines.push("\n--- Branches / locations (name, branchId, address) ---");
     branches.forEach((b) => {
-      lines.push(`Branch: ${b.name || b.branchId}. Location: ${b.location || "—"}. Address: ${b.address || "—"}. Capacity: ${b.capacity ?? 1}.`);
+      lines.push(`Branch: ${b.name || b.branchId}. BranchId: ${b.branchId}. Location: ${b.location || "—"}. Address: ${b.address || "—"}. Capacity: ${b.capacity ?? 1}.`);
     });
   }
 
   if (services && services.length > 0) {
-    lines.push("\n--- Services (name, duration, pricing) ---");
+    lines.push("\n--- Services (name, serviceId, duration, pricing, gender) ---");
     services.forEach((s) => {
       const price = s.priceCents != null ? `$${(Number(s.priceCents) / 100).toFixed(2)}` : "—";
-      lines.push(`Service: ${s.name || s.serviceId}. Duration: ${s.durationMinutes ?? 0} minutes. Price: ${price}.`);
+      const gender = s.gender ? ` Gender: ${s.gender}.` : "";
+      lines.push(`Service: ${s.name || s.serviceId}. ServiceId: ${s.serviceId}. Duration: ${s.durationMinutes ?? 0} minutes. Price: ${price}.${gender}`);
     });
   }
 

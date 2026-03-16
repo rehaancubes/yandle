@@ -1,16 +1,50 @@
 /**
- * VOXA Auth — Cognito API via direct HTTP (no hosted UI, no Amplify).
- * Uses USER_PASSWORD_AUTH flow for sign-in, and Cognito's SignUp/ConfirmSignUp for registration.
+ * Yandle Auth — Cognito API via direct HTTP (no hosted UI, no Amplify).
+ * Uses CUSTOM_AUTH (OTP) flow for both email and phone sign-in.
  */
 
-const AUTH_STATE_KEY = "voxa_auth_state";
+const AUTH_STATE_KEY = "yandle_auth_state";
+
+// ─── Storage key migration (voxa_ → yandle_) ─────────────────────────────────
+(function migrateStorageKeys() {
+  const migrations: [string, string][] = [
+    ["voxa_id_token", "yandle_id_token"],
+    ["voxa_access_token", "yandle_access_token"],
+    ["voxa_refresh_token", "yandle_refresh_token"],
+    ["voxa_auth_state", "yandle_auth_state"],
+  ];
+  for (const [oldKey, newKey] of migrations) {
+    const val = localStorage.getItem(oldKey);
+    if (val && !localStorage.getItem(newKey)) {
+      localStorage.setItem(newKey, val);
+    }
+    if (val) localStorage.removeItem(oldKey);
+  }
+  // Migrate onboarding keys
+  const keysToMigrate: [string, string][] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key?.startsWith("voxa_onboarding")) {
+      const newKey = key.replace("voxa_onboarding", "yandle_onboarding");
+      keysToMigrate.push([key, newKey]);
+    }
+  }
+  for (const [oldKey, newKey] of keysToMigrate) {
+    const val = localStorage.getItem(oldKey);
+    if (val && !localStorage.getItem(newKey)) {
+      localStorage.setItem(newKey, val);
+    }
+    if (val) localStorage.removeItem(oldKey);
+  }
+})();
 
 // ─── Config helpers ────────────────────────────────────────────────────────────
+
+const apiBase = (import.meta.env.VITE_API_BASE_URL as string || "").replace(/\/$/, "");
 
 export function getAuthConfig() {
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const domain = import.meta.env.VITE_COGNITO_DOMAIN as string | undefined;
-  // Extract region from domain: "https://voxa-auth-dev.auth.us-east-1.amazoncognito.com"
   const regionMatch = domain?.match(/\.auth\.([a-z0-9-]+)\.amazoncognito\.com/);
   const region = (import.meta.env.VITE_COGNITO_REGION as string | undefined) || regionMatch?.[1] || "us-east-1";
   const redirectUri =
@@ -28,30 +62,6 @@ export function getAuthConfig() {
   };
 }
 
-/** Cognito REST API endpoint for the user pool region */
-function cognitoEndpoint(region: string) {
-  return `https://cognito-idp.${region}.amazonaws.com/`;
-}
-
-async function cognitoRequest(region: string, target: string, body: object) {
-  const res = await fetch(cognitoEndpoint(region), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-amz-json-1.1",
-      "X-Amz-Target": `AWSCognitoIdentityProviderService.${target}`,
-    },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    const msg = data.message || data.Message || data.__type || `Cognito error ${res.status}`;
-    const err: any = new Error(msg);
-    err.code = data.__type || "";
-    throw err;
-  }
-  return data;
-}
-
 // ─── JWT helpers ───────────────────────────────────────────────────────────────
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
@@ -67,7 +77,7 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
 }
 
 export function getIdTokenClaims(): Record<string, unknown> | null {
-  const token = localStorage.getItem("voxa_id_token");
+  const token = localStorage.getItem("yandle_id_token");
   if (!token) return null;
   return decodeJwtPayload(token);
 }
@@ -85,8 +95,8 @@ export function getCurrentUserEmail(): string | null {
 }
 
 export function getOnboardingStorageKey(sub?: string | null): string {
-  if (!sub) return "voxa_onboarding";
-  return `voxa_onboarding:${sub}`;
+  if (!sub) return "yandle_onboarding";
+  return `yandle_onboarding:${sub}`;
 }
 
 function parseJwtExp(token: string): number {
@@ -95,176 +105,62 @@ function parseJwtExp(token: string): number {
 }
 
 export function isAuthenticated(): boolean {
-  const token = localStorage.getItem("voxa_id_token");
+  const token = localStorage.getItem("yandle_id_token");
   if (!token) return false;
   return parseJwtExp(token) > Date.now();
 }
 
-/**
- * Attempt to refresh the session using the stored refresh token.
- * Returns true if new tokens were obtained, false otherwise.
- */
-export async function refreshSession(): Promise<boolean> {
-  const { region, clientId } = getAuthConfig();
-  const refreshToken = localStorage.getItem("voxa_refresh_token");
-  if (!clientId || !region || !refreshToken) return false;
-  try {
-    const data = await cognitoRequest(region, "InitiateAuth", {
-      AuthFlow: "REFRESH_TOKEN_AUTH",
-      ClientId: clientId,
-      AuthParameters: {
-        REFRESH_TOKEN: refreshToken,
-      },
-    });
-    const result = data.AuthenticationResult;
-    if (!result?.IdToken) return false;
-    localStorage.setItem("voxa_id_token", result.IdToken);
-    if (result.AccessToken) localStorage.setItem("voxa_access_token", result.AccessToken);
-    // Cognito does not return a new refresh token on refresh — keep the existing one
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Check if authenticated, and if the ID token is expired, try refreshing silently.
- * Use this instead of isAuthenticated() for auth gates.
- */
-export async function ensureAuthenticated(): Promise<boolean> {
-  if (isAuthenticated()) return true;
-  // Token expired — try refreshing
-  const refreshed = await refreshSession();
-  return refreshed && isAuthenticated();
-}
-
-// ─── Custom auth (email + password) ───────────────────────────────────────────
+// ─── Email OTP auth ───────────────────────────────────────────────────────────
 
 export interface AuthResult {
   ok: boolean;
   error?: string;
   code?: string;
-  /** Set to true if email confirmation is required (new account) */
-  needsConfirmation?: boolean;
 }
 
-/** Sign up with email + password. Returns ok=true if sign-up succeeded (OTP sent to email). */
-export async function signUp(email: string, password: string): Promise<AuthResult> {
-  const { region, clientId } = getAuthConfig();
-  if (!clientId || !region) return { ok: false, error: "Auth not configured." };
+export interface OtpStartResult {
+  ok: boolean;
+  session?: string;
+  error?: string;
+}
+
+/** Send email OTP — creates user if needed, sends code via Cognito built-in email. */
+export async function sendEmailOtp(email: string): Promise<OtpStartResult> {
   try {
-    await cognitoRequest(region, "SignUp", {
-      ClientId: clientId,
-      Username: email.trim().toLowerCase(),
-      Password: password,
-      UserAttributes: [{ Name: "email", Value: email.trim().toLowerCase() }],
+    const res = await fetch(`${apiBase}/auth/email`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim().toLowerCase(), action: "email-start" }),
     });
+    const data = await res.json();
+    if (!res.ok) return { ok: false, error: data.error || "Failed to send code" };
     return { ok: true };
   } catch (e: any) {
-    if (e.code === "UsernameExistsException") {
-      return { ok: false, error: "An account with this email already exists.", code: e.code };
-    }
-    return { ok: false, error: e.message, code: e.code };
+    return { ok: false, error: e.message };
   }
 }
 
-/** Confirm sign-up with the OTP sent to email. */
-export async function confirmSignUp(email: string, code: string): Promise<AuthResult> {
-  const { region, clientId } = getAuthConfig();
-  if (!clientId || !region) return { ok: false, error: "Auth not configured." };
+/** Verify email OTP — confirms code and returns tokens. */
+export async function verifyEmailOtp(email: string, otp: string): Promise<AuthResult> {
   try {
-    await cognitoRequest(region, "ConfirmSignUp", {
-      ClientId: clientId,
-      Username: email.trim().toLowerCase(),
-      ConfirmationCode: code.trim(),
+    const res = await fetch(`${apiBase}/auth/email`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: email.trim().toLowerCase(),
+        action: "email-verify",
+        otp: otp.trim(),
+      }),
     });
+    const data = await res.json();
+    if (!res.ok) return { ok: false, error: data.error || "Verification failed" };
+    if (!data.idToken) return { ok: false, error: "No token in response." };
+    localStorage.setItem("yandle_id_token", data.idToken);
+    localStorage.setItem("yandle_access_token", data.accessToken);
+    if (data.refreshToken) localStorage.setItem("yandle_refresh_token", data.refreshToken);
     return { ok: true };
   } catch (e: any) {
-    if (e.code === "CodeMismatchException") return { ok: false, error: "Incorrect verification code.", code: e.code };
-    if (e.code === "ExpiredCodeException") return { ok: false, error: "Code expired. Please resend.", code: e.code };
-    return { ok: false, error: e.message, code: e.code };
-  }
-}
-
-/** Resend sign-up confirmation OTP. */
-export async function resendConfirmationCode(email: string): Promise<AuthResult> {
-  const { region, clientId } = getAuthConfig();
-  if (!clientId || !region) return { ok: false, error: "Auth not configured." };
-  try {
-    await cognitoRequest(region, "ResendConfirmationCode", {
-      ClientId: clientId,
-      Username: email.trim().toLowerCase(),
-    });
-    return { ok: true };
-  } catch (e: any) {
-    return { ok: false, error: e.message, code: e.code };
-  }
-}
-
-/** Sign in with email + password using USER_PASSWORD_AUTH flow. */
-export async function signIn(email: string, password: string): Promise<AuthResult> {
-  const { region, clientId } = getAuthConfig();
-  if (!clientId || !region) return { ok: false, error: "Auth not configured." };
-  try {
-    const data = await cognitoRequest(region, "InitiateAuth", {
-      AuthFlow: "USER_PASSWORD_AUTH",
-      ClientId: clientId,
-      AuthParameters: {
-        USERNAME: email.trim().toLowerCase(),
-        PASSWORD: password,
-      },
-    });
-    const result = data.AuthenticationResult;
-    if (!result?.IdToken) {
-      return { ok: false, error: "No token in response." };
-    }
-    localStorage.setItem("voxa_id_token", result.IdToken);
-    localStorage.setItem("voxa_access_token", result.AccessToken);
-    if (result.RefreshToken) localStorage.setItem("voxa_refresh_token", result.RefreshToken);
-    return { ok: true };
-  } catch (e: any) {
-    if (e.code === "UserNotConfirmedException") {
-      return { ok: false, error: "Please verify your email first.", code: e.code, needsConfirmation: true };
-    }
-    if (e.code === "NotAuthorizedException") {
-      return { ok: false, error: "Incorrect email or password.", code: e.code };
-    }
-    if (e.code === "UserNotFoundException") {
-      return { ok: false, error: "No account found with this email.", code: e.code };
-    }
-    return { ok: false, error: e.message, code: e.code };
-  }
-}
-
-/** Initiate forgot password — sends OTP to email. */
-export async function forgotPassword(email: string): Promise<AuthResult> {
-  const { region, clientId } = getAuthConfig();
-  if (!clientId || !region) return { ok: false, error: "Auth not configured." };
-  try {
-    await cognitoRequest(region, "ForgotPassword", {
-      ClientId: clientId,
-      Username: email.trim().toLowerCase(),
-    });
-    return { ok: true };
-  } catch (e: any) {
-    return { ok: false, error: e.message, code: e.code };
-  }
-}
-
-/** Confirm new password after forgot-password OTP. */
-export async function confirmForgotPassword(email: string, code: string, newPassword: string): Promise<AuthResult> {
-  const { region, clientId } = getAuthConfig();
-  if (!clientId || !region) return { ok: false, error: "Auth not configured." };
-  try {
-    await cognitoRequest(region, "ConfirmForgotPassword", {
-      ClientId: clientId,
-      Username: email.trim().toLowerCase(),
-      ConfirmationCode: code.trim(),
-      Password: newPassword,
-    });
-    return { ok: true };
-  } catch (e: any) {
-    return { ok: false, error: e.message, code: e.code };
+    return { ok: false, error: e.message };
   }
 }
 
@@ -307,16 +203,16 @@ export function completeLoginFromHash(hash: string): { ok: boolean; error?: stri
   if (!idToken || !accessToken) return { ok: false, error: "Missing token in callback." };
   if (state && expectedState && state !== expectedState) return { ok: false, error: "Auth state mismatch." };
   localStorage.removeItem(AUTH_STATE_KEY);
-  localStorage.setItem("voxa_id_token", idToken);
-  localStorage.setItem("voxa_access_token", accessToken);
+  localStorage.setItem("yandle_id_token", idToken);
+  localStorage.setItem("yandle_access_token", accessToken);
   return { ok: true };
 }
 
 export function signOut() {
   const cfg = getAuthConfig();
-  localStorage.removeItem("voxa_id_token");
-  localStorage.removeItem("voxa_access_token");
-  localStorage.removeItem("voxa_refresh_token");
+  localStorage.removeItem("yandle_id_token");
+  localStorage.removeItem("yandle_access_token");
+  localStorage.removeItem("yandle_refresh_token");
   if (!cfg.domain || !cfg.clientId) return;
   const logoutUrl = new URL(`${cfg.domain}/logout`);
   logoutUrl.searchParams.set("client_id", cfg.clientId);
@@ -324,17 +220,16 @@ export function signOut() {
   window.location.assign(logoutUrl.toString());
 }
 
-/** Remove all onboarding data from localStorage (handle, use case, form data). */
+/** Remove all onboarding data from localStorage. */
 export function clearOnboardingStorage() {
   const sub = getCurrentUserSub();
-  localStorage.removeItem("voxa_onboarding");
-  if (sub) localStorage.removeItem(`voxa_onboarding:${sub}`);
-  // Clear any other keys that might store onboarding (e.g. legacy or multiple subs)
+  localStorage.removeItem("yandle_onboarding");
+  if (sub) localStorage.removeItem(`yandle_onboarding:${sub}`);
   try {
     const keysToRemove: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key?.startsWith("voxa_onboarding")) keysToRemove.push(key);
+      if (key?.startsWith("yandle_onboarding")) keysToRemove.push(key);
     }
     keysToRemove.forEach((k) => localStorage.removeItem(k));
   } catch (_) {}

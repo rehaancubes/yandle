@@ -6,7 +6,7 @@ exports.handler = async () => {
     },
     body: JSON.stringify({
       ok: true,
-      service: "voxa-api",
+      service: "yandle-api",
       timestamp: new Date().toISOString()
     })
   };

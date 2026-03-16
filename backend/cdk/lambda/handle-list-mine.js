@@ -55,7 +55,7 @@ exports.handler = async (event) => {
       };
     }
 
-    // List all handles the user owns
+    // List all handles the user owns (by sub)
     const ownerResult = await ddb
       .query({
         TableName: process.env.HANDLES_TABLE,
@@ -65,15 +65,48 @@ exports.handler = async (event) => {
       })
       .promise();
 
-    const ownedHandles = (ownerResult.Items || []).map((item) => ({
-      handle: item.handle,
-      displayName: item.displayName,
-      useCase: item.useCase,
-      useCaseId: item.useCaseId,
-      phoneNumber: item.phoneNumber,
-      updatedAt: item.updatedAt,
-      role: "owner"
-    }));
+    const ownedHandleSet = new Set();
+    const ownedHandles = (ownerResult.Items || []).map((item) => {
+      ownedHandleSet.add(item.handle);
+      return {
+        handle: item.handle,
+        displayName: item.displayName,
+        useCase: item.useCase,
+        useCaseId: item.useCaseId,
+        phoneNumber: item.phoneNumber,
+        updatedAt: item.updatedAt,
+        role: "owner"
+      };
+    });
+
+    // Also find handles owned by the same email (covers cases where sub differs,
+    // e.g. phone-auth vs email-auth for the same person)
+    if (callerEmail && process.env.HANDLES_OWNER_EMAIL_INDEX) {
+      try {
+        const emailOwnerResult = await ddb.query({
+          TableName: process.env.HANDLES_TABLE,
+          IndexName: process.env.HANDLES_OWNER_EMAIL_INDEX,
+          KeyConditionExpression: "ownerEmail = :e",
+          ExpressionAttributeValues: { ":e": callerEmail }
+        }).promise();
+        for (const item of (emailOwnerResult.Items || [])) {
+          if (!ownedHandleSet.has(item.handle)) {
+            ownedHandleSet.add(item.handle);
+            ownedHandles.push({
+              handle: item.handle,
+              displayName: item.displayName,
+              useCase: item.useCase,
+              useCaseId: item.useCaseId,
+              phoneNumber: item.phoneNumber,
+              updatedAt: item.updatedAt,
+              role: "owner"
+            });
+          }
+        }
+      } catch (e) {
+        console.warn("[handle-list-mine] Email owner lookup failed:", e.message);
+      }
+    }
 
     // Also list handles where the user is a manager (by email)
     let memberHandles = [];

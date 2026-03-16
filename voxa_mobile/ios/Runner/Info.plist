@@ -49,5 +49,18 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>app-1-64624619611-ios-db7d67a00f71feaa2d8f7e</string>
+			</array>
+			<key>CFBundleURLName</key>
+			<string>Firebase Auth</string>
+		</dict>
+	</array>
 </dict>
 </plist>

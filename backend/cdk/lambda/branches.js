@@ -63,13 +63,19 @@ exports.handler = async (event) => {
       const location = String(body.location || "").trim();
       const capacity = Math.max(0, Number(body.capacity) || 1);
       const address = body.address != null ? String(body.address).trim() : "";
+      const geoLat = body.geoLat != null && Number.isFinite(Number(body.geoLat)) ? Number(body.geoLat) : undefined;
+      const geoLng = body.geoLng != null && Number.isFinite(Number(body.geoLng)) ? Number(body.geoLng) : undefined;
+      const placeId = body.placeId && String(body.placeId).trim() ? String(body.placeId).trim() : undefined;
       const item = {
         handle,
         branchId,
         name: name || "Branch",
-        location,
+        location: location || undefined,
         capacity,
         address: address || undefined,
+        ...(geoLat != null && { geoLat }),
+        ...(geoLng != null && { geoLng }),
+        ...(placeId && { placeId }),
         updatedAt: new Date().toISOString()
       };
       await ddb.put({ TableName: process.env.BRANCHES_TABLE, Item: item }).promise();

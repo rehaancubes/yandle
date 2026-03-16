@@ -62,6 +62,10 @@ exports.handler = async (event) => {
       const centerId = body.centerId && String(body.centerId).trim() ? String(body.centerId).trim() : generateId();
       const name = String(body.name || "").trim() || "Center";
       const location = body.location != null ? String(body.location).trim() : "";
+      const address = body.address != null ? String(body.address).trim() : "";
+      const geoLat = body.geoLat != null && Number.isFinite(Number(body.geoLat)) ? Number(body.geoLat) : undefined;
+      const geoLng = body.geoLng != null && Number.isFinite(Number(body.geoLng)) ? Number(body.geoLng) : undefined;
+      const placeId = body.placeId && String(body.placeId).trim() ? String(body.placeId).trim() : undefined;
       const machines = Array.isArray(body.machines)
         ? body.machines.map((m) => ({
             name: String(m.name || "").trim() || "Machine",
@@ -75,6 +79,10 @@ exports.handler = async (event) => {
         centerId,
         name,
         location: location || undefined,
+        address: address || undefined,
+        ...(geoLat != null && { geoLat }),
+        ...(geoLng != null && { geoLng }),
+        ...(placeId && { placeId }),
         machines,
         updatedAt: new Date().toISOString()
       };

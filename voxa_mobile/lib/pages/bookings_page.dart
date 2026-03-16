@@ -56,20 +56,24 @@ class _BookingsPageState extends State<BookingsPage> {
   }
 
   Future<void> _cancel(_Booking b) async {
-    final key = '${b.handle}|${b.startTime}';
+    final key = b.bookingId != null ? '${b.handle}|${b.startTime}|${b.bookingId}' : '${b.handle}|${b.startTime}';
     setState(() => _cancelling.add(key));
     try {
       final token = await AuthService.getIdToken();
+      var uri = '$apiBase/bookings?handle=${Uri.encodeComponent(b.handle)}&startTime=${Uri.encodeComponent(b.startTime)}';
+      if (b.bookingId != null && b.bookingId!.isNotEmpty) {
+        uri += '&bookingId=${Uri.encodeComponent(b.bookingId!)}';
+      }
       final res = await http.delete(
-        Uri.parse(
-            '$apiBase/bookings?handle=${Uri.encodeComponent(b.handle)}&startTime=${Uri.encodeComponent(b.startTime)}'),
+        Uri.parse(uri),
         headers: {
           if (token != null) 'authorization': 'Bearer $token',
         },
       );
       if (res.statusCode == 200 || res.statusCode == 404) {
         if (mounted) {
-          setState(() => _bookings.remove(b));
+          setState(() => _bookings.removeWhere((x) =>
+              (x.bookingId != null ? '${x.handle}|${x.startTime}|${x.bookingId}' : '${x.handle}|${x.startTime}') == key));
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Booking cancelled.'),
@@ -111,9 +115,10 @@ class _BookingsPageState extends State<BookingsPage> {
     );
   }
 
+  /// Format booking time to match the slot time shown when booking (same time as stored).
   String _formatTime(String iso) {
     try {
-      final dt = DateTime.parse(iso).toLocal();
+      final dt = DateTime.parse(iso);
       final months = [
         'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
         'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
@@ -129,7 +134,7 @@ class _BookingsPageState extends State<BookingsPage> {
 
   bool _isUpcoming(String startTime) {
     try {
-      return DateTime.parse(startTime).toLocal().isAfter(DateTime.now());
+      return DateTime.parse(startTime).isAfter(DateTime.now().toUtc());
     } catch (_) {
       return false;
     }
@@ -328,7 +333,7 @@ class _BookingsPageState extends State<BookingsPage> {
 
   Widget _buildBookingCard(ThemeData theme, _Booking b,
       {required bool isUpcoming}) {
-    final cancelKey = '${b.handle}|${b.startTime}';
+    final cancelKey = b.bookingId != null ? '${b.handle}|${b.startTime}|${b.bookingId}' : '${b.handle}|${b.startTime}';
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -493,6 +498,7 @@ class _BookingsPageState extends State<BookingsPage> {
 class _Booking {
   final String handle;
   final String startTime;
+  final String? bookingId;
   final int? durationMinutes;
   final String? notes;
   final String? businessDisplayName;
@@ -503,6 +509,7 @@ class _Booking {
   const _Booking({
     required this.handle,
     required this.startTime,
+    this.bookingId,
     this.durationMinutes,
     this.notes,
     this.businessDisplayName,
@@ -516,6 +523,7 @@ class _Booking {
     return _Booking(
       handle: json['handle'] as String? ?? '',
       startTime: json['startTime'] as String? ?? '',
+      bookingId: json['bookingId'] as String?,
       durationMinutes: (json['durationMinutes'] as num?)?.toInt(),
       notes: json['notes'] as String?,
       businessDisplayName: biz['displayName'] as String?,

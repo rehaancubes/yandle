@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { motion } from "framer-motion";
 import { useParams, useSearchParams } from "react-router-dom";
 import { io, type Socket } from "socket.io-client";
-import { Mic, MessageSquare, Send, Sparkles, Globe2, Clock3, Volume2, PhoneCall, ShieldCheck } from "lucide-react";
+import { Mic, MessageSquare, Send, Volume2, PhoneCall, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -66,7 +66,7 @@ type SonicConfig = {
 const apiBase = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 
 const starterMessages: ChatMessage[] = [
-  { role: "assistant", text: "Hey, I am your Yandle assistant. Ask me anything about services, pricing, or availability.", time: "just now" },
+  { role: "assistant", text: "Hey, I am your YANDLE assistant. Ask me anything about services, pricing, or availability.", time: "just now" },
 ];
 
 const ShareableLink = () => {
@@ -88,6 +88,7 @@ const ShareableLink = () => {
   const [sessionId, setSessionId] = useState("");
   const [sonicConfig, setSonicConfig] = useState<SonicConfig | null>(null);
   const [voiceSessionError, setVoiceSessionError] = useState("");
+  const [voiceConnecting, setVoiceConnecting] = useState(false);
   const [voiceSessionInfo, setVoiceSessionInfo] = useState<{ token?: string; expiresAt?: string } | null>(null);
   const [voiceToolEvents, setVoiceToolEvents] = useState<
     { id: string; ts: number; type: "use" | "result"; toolName: string; status?: "ok" | "error"; message?: string }
@@ -142,7 +143,7 @@ const ShareableLink = () => {
           const details = await profileResp.text();
           throw new Error(
             profileResp.status === 404
-              ? "This Yandle link is not configured yet."
+              ? "This YANDLE link is not configured yet."
               : `Failed to load profile (${profileResp.status}). ${details}`
           );
         }
@@ -153,7 +154,7 @@ const ShareableLink = () => {
           setMessages([
             {
               role: "assistant",
-              text: `Hey, I am ${profilePayload.profile.displayName || displayName}'s Yandle assistant. How can I help today?`,
+              text: `Hey, I am ${profilePayload.profile.displayName || displayName}'s YANDLE assistant. How can I help today?`,
               time: "just now",
             },
           ]);
@@ -290,6 +291,7 @@ const ShareableLink = () => {
     audioContextRef.current = null;
     playQueueRef.current = { nextTime: 0 };
     setIsVoiceLive(false);
+    setVoiceConnecting(false);
     setVoiceSessionInfo(null);
     setVoiceSessionError("");
   }, []);
@@ -301,6 +303,7 @@ const ShareableLink = () => {
     }
 
     setVoiceSessionError("");
+    setVoiceConnecting(true);
 
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -317,6 +320,7 @@ const ShareableLink = () => {
       } else {
         setVoiceSessionError(msg || "Could not access microphone.");
       }
+      setVoiceConnecting(false);
       return;
     }
 
@@ -324,6 +328,7 @@ const ShareableLink = () => {
       micStreamRef.current?.getTracks().forEach((t) => t.stop());
       micStreamRef.current = null;
       setVoiceSessionError("VITE_API_BASE_URL is missing.");
+      setVoiceConnecting(false);
       return;
     }
 
@@ -345,12 +350,10 @@ const ShareableLink = () => {
         expiresAt?: string;
         sonicServiceUrl?: string;
       };
-      // Prefer API; fallback to wss endpoint (same as Sip trunk)
-      const WSS_SONIC_BASE = "https://sonic.yandle.io";
       sonicServiceUrl =
         sessionPayload.sonicServiceUrl ||
         (configResp.ok ? ((await configResp.json()) as SonicConfig).sonicServiceUrl : "") ||
-        WSS_SONIC_BASE;
+        "";
       if (!sonicServiceUrl) {
         throw new Error("Sonic service URL not available. Is the Sonic ECS service deployed?");
       }
@@ -373,6 +376,7 @@ const ShareableLink = () => {
       micStreamRef.current?.getTracks().forEach((t) => t.stop());
       micStreamRef.current = null;
       setVoiceSessionError((error as Error).message);
+      setVoiceConnecting(false);
       return;
     }
 
@@ -437,6 +441,26 @@ const ShareableLink = () => {
           "This business is a GAMING CAFE. You must ONLY handle gaming cafe bookings (centers, machine types, time).",
           "Do NOT mention, offer, or ask about salon, clinic, or any other business type. Act as if this is exclusively a gaming cafe.",
           "Use the knowledge base below for centers and machines. Booking: gather center name, machine type, date, start time, duration, then name and phone/email. Use getBookingsForTimeRange with centerName and machineType; use createBooking with centerName, machineType, startTime, durationMinutes, name, and phone/email.",
+        ].join(" ")
+      );
+    } else if (useCaseId === "general") {
+      systemPromptParts.push(
+        [
+          "Always respond in English.",
+          "This is a GENERAL BUSINESS. Your primary job is to answer questions about the business using the knowledge base.",
+          "If a caller wants to speak to someone, leave a message, or request a callback, collect their full name, phone number, and a brief description of what they need.",
+          "Then confirm the details and use the createRequest tool to save it.",
+          "Do NOT create bookings for this business type. Instead, create callback requests using createRequest.",
+        ].join(" ")
+      );
+    } else if (useCaseId === "customer_support") {
+      systemPromptParts.push(
+        [
+          "Always respond in English.",
+          "This is a CUSTOMER SUPPORT CENTER. Your primary job is to help customers with their issues.",
+          "For new issues: collect the customer's name, phone number, issue description, and categorize the issue. Then create a support ticket using createSupportTicket.",
+          "If the customer asks about an existing ticket, ask for their phone number and use checkTicketStatus to look up their tickets.",
+          "Be empathetic, professional, and solution-oriented. Always read back the ticket ID clearly.",
         ].join(" ")
       );
     } else {
@@ -531,7 +555,8 @@ const ShareableLink = () => {
     if (profileForVoice?.knowledgeSummary) systemPromptParts.push("Knowledge base for this business:\n" + profileForVoice.knowledgeSummary);
     if (profileForVoice?.knowledgeBaseId) {
       systemPromptParts.push(
-        "A Bedrock Knowledge Base is connected. When the caller asks about policies, FAQs, pricing details, or other business-specific information, use the queryKnowledgeBase tool with their question to retrieve accurate answers before responding. When the tool result contains pricing (e.g. rupees per hour, rates), always state those amounts clearly in your reply."
+        "A Bedrock Knowledge Base is connected. When the caller asks about policies, FAQs, pricing details, or other business-specific information, use the queryKnowledgeBase tool with their question. " +
+        "When you receive the tool result, you MUST use the content inside the 'result' field as the source for your reply: speak that information clearly to the user (e.g. state prices, hours, location). Do not just say you found something—actually say what it says. If the result contains pricing or numbers, state them explicitly in your answer."
       );
     }
     systemPromptParts.push(
@@ -569,6 +594,7 @@ const ShareableLink = () => {
       micStreamRef.current?.getTracks().forEach((t) => t.stop());
       micStreamRef.current = null;
       setIsVoiceLive(false);
+      setVoiceConnecting(false);
       return;
     }
 
@@ -578,6 +604,11 @@ const ShareableLink = () => {
     socket.emit("audioStart");
 
     socket.once("audioReady", () => {
+      // Agent speaks first: send a synthetic prompt so the AI greets the visitor
+      socket.emit("textInput", {
+        role: "user",
+        content: "[The caller has just connected. Greet them warmly and ask how you can help.]",
+      });
       const stream = micStreamRef.current;
       if (!stream) return;
       const INPUT_SAMPLE_RATE = 16000;
@@ -608,9 +639,14 @@ const ShareableLink = () => {
     });
 
     const OUTPUT_SAMPLE_RATE = 24000;
+    let firstAudioReceived = false;
     socket.on("audioOutput", (data: { content?: string }) => {
       const content = data?.content;
       if (!content || typeof content !== "string") return;
+      if (!firstAudioReceived) {
+        firstAudioReceived = true;
+        setVoiceConnecting(false);
+      }
       try {
         const ctx = audioContextRef.current;
         if (!ctx) return;
@@ -721,16 +757,16 @@ const ShareableLink = () => {
             {profileError && (
               <div className="mb-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive-foreground">{profileError}</div>
             )}
-            <Tabs defaultValue="chat" className="w-full flex-1 flex flex-col min-h-0">
+            <Tabs defaultValue="voice" className="w-full flex-1 flex flex-col min-h-0">
               <TabsList className="grid w-full grid-cols-2 bg-secondary shrink-0">
-                <TabsTrigger value="chat" className="gap-2" disabled={profile?.textEnabled === false}><MessageSquare className="h-4 w-4" /> Chat</TabsTrigger>
                 <TabsTrigger value="voice" className="gap-2" disabled={profile?.voiceEnabled === false}><Mic className="h-4 w-4" /> Voice</TabsTrigger>
+                <TabsTrigger value="chat" className="gap-2" disabled={profile?.textEnabled === false}><MessageSquare className="h-4 w-4" /> Chat</TabsTrigger>
               </TabsList>
               <TabsContent value="chat" className="mt-2 space-y-2 flex-1 flex flex-col min-h-0">
                 <div className="rounded-xl border border-border bg-secondary/30 p-2 flex-1 min-h-[240px] overflow-y-auto space-y-2">
                   {messages.map((message, idx) => (
                     <div key={`${message.role}-${idx}`} className={`rounded-lg px-2 py-1.5 max-w-[90%] text-sm ${message.role === "visitor" ? "ml-auto bg-primary/20 border border-primary/30" : "bg-background/70 border border-border"}`}>
-                      <p className="text-[11px] text-muted-foreground mb-0.5">{message.role === "visitor" ? "You" : `Yandle`}</p>
+                      <p className="text-[11px] text-muted-foreground mb-0.5">{message.role === "visitor" ? "You" : `YANDLE`}</p>
                       <p>{message.text}</p>
                     </div>
                   ))}
@@ -763,130 +799,30 @@ const ShareableLink = () => {
     <div ref={themeContainerRef} className="min-h-screen bg-background bg-grid relative overflow-hidden">
       <div className="absolute inset-0 bg-radial-glow pointer-events-none" />
 
-      <div className="relative z-10 mx-auto w-full max-w-6xl px-6 py-10">
+      <div className="relative z-10 mx-auto w-full max-w-lg px-4 py-10">
         <motion.div
           initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.45 }}
-          className="grid gap-6 lg:grid-cols-[1.15fr_1fr]"
         >
-          <section className="space-y-6">
-            <Card className="bg-card/60 border-border overflow-hidden">
-              <CardContent className="p-6 sm:p-8">
-                <p className="text-xs tracking-[0.18em] uppercase text-primary font-semibold mb-3">YANDLE Link</p>
-                <h1 className="font-display text-4xl sm:text-5xl font-bold leading-tight mb-3">
-                  {profile?.businessName ? (
-                    <>
-                      Visit{" "}
-                      <span className="text-gradient-primary">
-                        {profile.businessName}
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      Talk to{" "}
-                      <span className="text-gradient-primary">
-                        {profile?.displayName || displayName}
-                      </span>
-                    </>
-                  )}
-                </h1>
-                <p className="text-muted-foreground text-base sm:text-lg max-w-xl">
-                  Instantly ask about services, prices, and real-time availability over text or voice.
-                </p>
+          <div className="text-center mb-6">
+            <p className="text-xs tracking-[0.18em] uppercase text-primary font-semibold mb-2">YANDLE</p>
+            <h1 className="font-display text-2xl sm:text-3xl font-bold leading-tight">
+              {profile?.businessName || profile?.displayName || displayName}
+            </h1>
+            {profile?.phoneNumber && (
+              <a
+                href={`tel:${profile.phoneNumber}`}
+                className="inline-flex items-center gap-1.5 mt-2 text-xs text-muted-foreground hover:text-primary transition-colors"
+              >
+                <PhoneCall className="h-3 w-3" />
+                <span>{profile.phoneNumber}</span>
+              </a>
+            )}
+          </div>
 
-                <div className="mt-6 grid gap-3 sm:grid-cols-3">
-                  {[
-                    { icon: Sparkles, label: "Nova-powered", desc: "Understands intent + books for you" },
-                    { icon: Globe2, label: "Smart link", desc: `yandle.io/${profile?.handle || safeHandle}` },
-                    {
-                      icon: ShieldCheck,
-                      label: "Availability-aware",
-                      desc:
-                        profile?.realtimeAvailability?.hasWalkInSlots || profile?.realtimeAvailability?.supportsUrgentCases
-                          ? "Can handle urgent / walk-in cases"
-                          : profile?.persona || "Consent-aware flows",
-                    },
-                  ].map((item) => (
-                    <div key={item.label} className="rounded-lg bg-secondary/40 border border-border p-3">
-                      <item.icon className="h-4 w-4 text-primary mb-2" />
-                      <p className="text-sm font-medium">{item.label}</p>
-                      <p className="text-xs text-muted-foreground">{item.desc}</p>
-                    </div>
-                  ))}
-                </div>
-
-                {(profile?.address || profile?.city || profile?.phoneNumber) && (
-                  <div className="mt-6 grid gap-3 sm:grid-cols-3 text-xs text-muted-foreground">
-                    {(profile.address || profile.city) && (
-                      <div className="rounded-lg bg-secondary/30 border border-border px-3 py-2">
-                        <p className="font-medium text-foreground text-sm mb-1">Location</p>
-                        <p>{profile.address}</p>
-                        {profile.city && <p>{profile.city}</p>}
-                      </div>
-                    )}
-                    {profile?.phoneNumber && (
-                      <div className="rounded-lg bg-secondary/30 border border-border px-3 py-2">
-                        <p className="font-medium text-foreground text-sm mb-1">Call</p>
-                        <p>{profile.phoneNumber}</p>
-                        {profile.hasAiPhone && (
-                          <p className="mt-1 text-[11px]">
-                            This number is answered by an AI receptionist.
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card className="bg-card/60 border-border">
-              <CardHeader>
-                <CardTitle className="text-base font-display flex items-center gap-2">
-                  <Clock3 className="h-4 w-4 text-primary" />
-                  What this AI can do
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="grid sm:grid-cols-2 gap-3">
-                {[
-                  "Answer service and pricing questions",
-                  "Collect lead details and intent",
-                  "Qualify inquiries automatically",
-                  "Route urgent requests to human follow-up",
-                ].map((task) => (
-                  <div key={task} className="rounded-lg bg-secondary/30 border border-border px-3 py-2 text-sm">
-                    {task}
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          </section>
-
-          <section>
-            <Card className="bg-card/70 border-border backdrop-blur-sm">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between gap-3">
-                  <CardTitle className="font-display text-xl">
-                    Start Conversation
-                  </CardTitle>
-                  {profile?.phoneNumber && (
-                    <div className="hidden sm:flex flex-col items-end text-xs">
-                      <span className="text-muted-foreground mb-0.5">
-                        Prefer phone?
-                      </span>
-                      <a
-                        href={`tel:${profile.phoneNumber}`}
-                        className="inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-1 border border-border text-foreground hover:border-primary transition-colors"
-                      >
-                        <PhoneCall className="h-3 w-3" />
-                        <span>{profile.phoneNumber}</span>
-                      </a>
-                    </div>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent>
+          <Card className="bg-card/70 border-border backdrop-blur-sm">
+              <CardContent className="pt-6">
                 {isLoadingProfile && (
                   <div className="mb-4 rounded-lg border border-border bg-secondary/30 px-3 py-2 text-xs text-muted-foreground">
                     Loading profile...
@@ -897,13 +833,13 @@ const ShareableLink = () => {
                     {profileError}
                   </div>
                 )}
-                <Tabs defaultValue="chat" className="w-full">
+                <Tabs defaultValue="voice" className="w-full">
                   <TabsList className="grid w-full grid-cols-2 bg-secondary">
-                    <TabsTrigger value="chat" className="gap-2" disabled={profile?.textEnabled === false}>
-                      <MessageSquare className="h-4 w-4" /> Text Chat
-                    </TabsTrigger>
                     <TabsTrigger value="voice" className="gap-2" disabled={profile?.voiceEnabled === false}>
-                      <Mic className="h-4 w-4" /> Voice Call
+                      <Mic className="h-4 w-4" /> Voice
+                    </TabsTrigger>
+                    <TabsTrigger value="chat" className="gap-2" disabled={profile?.textEnabled === false}>
+                      <MessageSquare className="h-4 w-4" /> Chat
                     </TabsTrigger>
                   </TabsList>
 
@@ -919,7 +855,7 @@ const ShareableLink = () => {
                           }`}
                         >
                           <p className="text-xs text-muted-foreground mb-1">
-                            {message.role === "visitor" ? "You" : `Yandle • ${displayName}`}
+                            {message.role === "visitor" ? "You" : `YANDLE • ${displayName}`}
                           </p>
                           <p className="text-sm">{message.text}</p>
                         </div>
@@ -956,98 +892,103 @@ const ShareableLink = () => {
                   </TabsContent>
 
                   <TabsContent value="voice" className="mt-4 space-y-4">
-                    <div className="rounded-xl border border-border bg-secondary/30 px-4 py-5 text-center space-y-4">
-                      <div className="mx-auto h-20 w-20 rounded-full bg-primary/20 border border-primary/40 flex items-center justify-center">
-                        <Volume2 className="h-8 w-8 text-primary" />
-                      </div>
-                      <div>
-                        <p className="font-medium">Voice Session with {profile?.displayName || displayName}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {sonicConfig?.sonicServiceUrl
-                            ? `Sonic ready in ${sonicConfig.region || "us-east-1"}`
-                            : "Sonic config unavailable"}
-                        </p>
-                        {sonicConfig?.sonicWebsocketUrl && (
-                          <p className="text-[11px] text-muted-foreground mt-1 truncate">
-                            WS: {sonicConfig.sonicWebsocketUrl}
-                          </p>
-                        )}
-                        {voiceSessionInfo?.expiresAt && (
-                          <p className="text-[11px] text-muted-foreground mt-1">
-                            Session expires at {new Date(voiceSessionInfo.expiresAt).toLocaleTimeString()}
-                          </p>
-                        )}
-                        {voiceSessionError && (
-                          <p className="text-[11px] text-destructive mt-1">{voiceSessionError}</p>
-                        )}
-                        {isVoiceLive && !voiceSessionError && (
-                          <>
-                            <p className="text-xs text-primary font-medium mt-1">Microphone on — you can speak</p>
-                            <p className="text-[11px] text-muted-foreground mt-0.5">
-                              Connected to Nova Sonic. Agent replies will play here.
-                            </p>
-                          </>
-                        )}
-
-                        {voiceToolEvents.length > 0 && (
-                          <div className="mt-2 space-y-1">
-                            <p className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                              Tool activity
-                            </p>
-                            <div className="space-y-0.5 max-h-20 overflow-y-auto pr-1">
-                              {voiceToolEvents.slice(0, 5).map((evt) => (
-                                <div
-                                  key={evt.id}
-                                  className="flex items-center justify-between text-[11px]"
-                                >
-                                  <span className="truncate">
-                                    {evt.type === "use" ? "Calling" : "Result"}{" "}
-                                    <span className="font-medium">{evt.toolName}</span>
-                                  </span>
-                                  {evt.type === "result" && (
-                                    <span
-                                      className={`ml-2 px-1.5 py-0.5 rounded-full ${
-                                        evt.status === "error"
-                                          ? "bg-destructive/10 text-destructive"
-                                          : "bg-emerald-500/10 text-emerald-500"
-                                      }`}
-                                    >
-                                      {evt.status === "error" ? "Error" : "OK"}
-                                    </span>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
+                    <div className="rounded-xl border border-border bg-secondary/30 px-4 py-6 text-center space-y-4">
+                      {voiceConnecting ? (
+                        <>
+                          <div className="mx-auto h-20 w-20 rounded-full bg-primary/20 border border-primary/40 flex items-center justify-center">
+                            <Loader2 className="h-8 w-8 text-primary animate-spin" />
                           </div>
-                        )}
-                      </div>
-
-                      <div className="flex items-end justify-center gap-1 h-12">
-                        {[14, 28, 18, 34, 22, 30, 16, 26].map((h, i) => (
-                          <motion.span
-                            key={i}
-                            className="w-1.5 rounded-full bg-primary/70"
-                            animate={{ height: [h, h + 8, h] }}
-                            transition={{ repeat: Infinity, duration: 1.4, delay: i * 0.08 }}
-                            style={{ height: `${h}px` }}
-                          />
-                        ))}
-                      </div>
+                          <div>
+                            <p className="font-medium">Connecting to AI assistant...</p>
+                            <p className="text-xs text-muted-foreground mt-1">Setting up your voice session</p>
+                          </div>
+                          <div className="flex items-end justify-center gap-1 h-10">
+                            {[10, 18, 14, 22, 16, 20, 12, 18].map((h, i) => (
+                              <motion.span
+                                key={i}
+                                className="w-1.5 rounded-full bg-primary/40"
+                                animate={{ height: [h, h + 6, h] }}
+                                transition={{ repeat: Infinity, duration: 1.2, delay: i * 0.1 }}
+                                style={{ height: `${h}px` }}
+                              />
+                            ))}
+                          </div>
+                        </>
+                      ) : isVoiceLive ? (
+                        <>
+                          <div className="mx-auto h-20 w-20 rounded-full bg-primary/20 border border-primary/40 flex items-center justify-center">
+                            <Volume2 className="h-8 w-8 text-primary" />
+                          </div>
+                          <div>
+                            <p className="font-medium">Voice Session Active</p>
+                            {voiceSessionError ? (
+                              <p className="text-xs text-destructive mt-1">{voiceSessionError}</p>
+                            ) : (
+                              <p className="text-xs text-primary font-medium mt-1">Microphone on — speak now</p>
+                            )}
+                          </div>
+                          <div className="flex items-end justify-center gap-1 h-12">
+                            {[14, 28, 18, 34, 22, 30, 16, 26].map((h, i) => (
+                              <motion.span
+                                key={i}
+                                className="w-1.5 rounded-full bg-primary/70"
+                                animate={{ height: [h, h + 8, h] }}
+                                transition={{ repeat: Infinity, duration: 1.4, delay: i * 0.08 }}
+                                style={{ height: `${h}px` }}
+                              />
+                            ))}
+                          </div>
+                          {voiceToolEvents.length > 0 && (
+                            <div className="space-y-1 text-left">
+                              <p className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Tool activity</p>
+                              <div className="space-y-0.5 max-h-20 overflow-y-auto pr-1">
+                                {voiceToolEvents.slice(0, 5).map((evt) => (
+                                  <div key={evt.id} className="flex items-center justify-between text-[11px]">
+                                    <span className="truncate">
+                                      {evt.type === "use" ? "Calling" : "Result"}{" "}
+                                      <span className="font-medium">{evt.toolName}</span>
+                                    </span>
+                                    {evt.type === "result" && (
+                                      <span className={`ml-2 px-1.5 py-0.5 rounded-full ${evt.status === "error" ? "bg-destructive/10 text-destructive" : "bg-emerald-500/10 text-emerald-500"}`}>
+                                        {evt.status === "error" ? "Error" : "OK"}
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <div className="mx-auto h-20 w-20 rounded-full bg-primary/20 border border-primary/40 flex items-center justify-center">
+                            <Mic className="h-8 w-8 text-primary" />
+                          </div>
+                          <div>
+                            <p className="font-medium">Talk to {profile?.displayName || displayName}</p>
+                            <p className="text-xs text-muted-foreground mt-1">Start a voice conversation with the AI assistant</p>
+                          </div>
+                        </>
+                      )}
 
                       <Button
                         onClick={toggleVoiceSession}
-                        disabled={profile?.voiceEnabled === false}
+                        disabled={profile?.voiceEnabled === false || voiceConnecting}
                         className={`w-full gap-2 ${isVoiceLive ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : ""}`}
                       >
-                        <PhoneCall className="h-4 w-4" />
-                        {isVoiceLive ? "End Voice Session" : "Start Voice Session"}
+                        {voiceConnecting ? (
+                          <><Loader2 className="h-4 w-4 animate-spin" /> Connecting...</>
+                        ) : isVoiceLive ? (
+                          <><PhoneCall className="h-4 w-4" /> End Voice Session</>
+                        ) : (
+                          <><PhoneCall className="h-4 w-4" /> Start Voice Session</>
+                        )}
                       </Button>
                     </div>
                   </TabsContent>
                 </Tabs>
               </CardContent>
             </Card>
-          </section>
         </motion.div>
       </div>
     </div>

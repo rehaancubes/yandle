@@ -31,13 +31,24 @@ exports.handler = async (event) => {
         return { statusCode: 400, headers: { "content-type": "application/json" }, body: JSON.stringify({ error: "DID required" }) };
       }
 
-      // Try multiple formats
+      // Normalize to digits only, then build all likely table key formats (91, 0, +91, 10-digit)
       const cleaned = did.replace(/\D/g, "");
-      const candidates = [cleaned, "+" + cleaned];
-      if (cleaned.length === 10) { candidates.push("91" + cleaned, "+91" + cleaned); }
-      if (cleaned.startsWith("91") && cleaned.length === 12) { candidates.push("+" + cleaned); }
+      let tenDigit = cleaned;
+      if (cleaned.length === 12 && cleaned.startsWith("91")) {
+        tenDigit = cleaned.slice(2);
+      } else if (cleaned.length === 11 && cleaned.startsWith("0")) {
+        tenDigit = cleaned.slice(1);
+      }
+      const candidates = [
+        tenDigit,           // 8035229486
+        "0" + tenDigit,     // 08035229486 (Indian national)
+        "91" + tenDigit,    // 918035229486
+        "+91" + tenDigit,   // +918035229486
+        cleaned,            // raw digits as received (e.g. 918035229486)
+        "+" + cleaned
+      ];
 
-      for (const phoneKey of [...new Set(candidates)]) {
+      for (const phoneKey of [...new Set(candidates)].filter(Boolean)) {
         const result = await ddb.get({ TableName: PHONE_TABLE, Key: { phoneNumber: phoneKey } }).promise();
         if (result.Item && result.Item.handle && result.Item.status === "assigned") {
           return { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ handle: result.Item.handle }) };

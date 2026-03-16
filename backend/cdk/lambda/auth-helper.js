@@ -1,9 +1,21 @@
 /**
- * Shared access-control helper for VOXA Lambda functions.
+ * Shared access-control helper for YANDLE Lambda functions.
  * Checks if the caller is the handle owner OR an added manager via MembersTable.
  */
 const AWS = require("aws-sdk");
 const ddb = new AWS.DynamoDB.DocumentClient();
+
+/**
+ * Extract caller sub and email from API Gateway event. Tries multiple claim paths
+ * (HTTP API JWT authorizer can use jwt.claims or claims; authorizer may also be the claims object).
+ */
+function getCallerFromEvent(event) {
+  const auth = event?.requestContext?.authorizer || {};
+  const claims = auth.jwt?.claims || auth.claims || auth;
+  const sub = (claims.sub || "").toString().trim() || null;
+  const email = (claims.email || claims["cognito:username"] || "").toString().trim().toLowerCase() || undefined;
+  return { sub, email };
+}
 
 /**
  * Asserts the caller (identified by sub + email) has owner or manager access to a handle.
@@ -16,9 +28,13 @@ async function assertAccess(handle, sub, email) {
     Key: { handle }
   }).promise();
   if (!result.Item) throw new Error("NOT_FOUND");
-  if (result.Item.ownerId === sub) return; // owner ✓
+  if (sub && result.Item.ownerId === sub) return; // owner ✓
 
-  // Check membership
+  // Same person by email (e.g. re-registered with new sub, or handle created with different auth)
+  const ownerEmail = result.Item.ownerEmail && String(result.Item.ownerEmail).trim().toLowerCase();
+  if (email && ownerEmail && ownerEmail === email) return;
+
+  // Check membership (email must match a row in Members table)
   if (email && process.env.MEMBERS_TABLE) {
     const memberRes = await ddb.get({
       TableName: process.env.MEMBERS_TABLE,
@@ -27,6 +43,15 @@ async function assertAccess(handle, sub, email) {
     if (memberRes.Item) return; // manager ✓
   }
 
+  // Debug: log why access was denied (no PII)
+  console.warn("[auth] FORBIDDEN", {
+    handle,
+    callerSubPresent: !!sub,
+    ownerIdPresent: !!result.Item.ownerId,
+    ownerMatch: result.Item.ownerId === sub,
+    emailPresent: !!email,
+    membersTableChecked: !!(email && process.env.MEMBERS_TABLE),
+  });
   throw new Error("FORBIDDEN");
 }
 
@@ -55,4 +80,4 @@ async function isOwner(handle, sub) {
   return result.Item?.ownerId === sub;
 }
 
-module.exports = { assertAccess, checkAccess, isOwner };
+module.exports = { assertAccess, checkAccess, isOwner, getCallerFromEvent };

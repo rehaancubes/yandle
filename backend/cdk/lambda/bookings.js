@@ -15,6 +15,18 @@ function generateId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+/** Get logical start time for overlap/display (handles composite key startTime#bookingId). */
+function getLogicalStartTime(item) {
+  if (item.slotStartTime) return item.slotStartTime;
+  const st = item.startTime || "";
+  return st.includes("#") ? st.split("#")[0] : st;
+}
+
+/** Build composite sort key so multiple bookings can share the same slot (e.g. multiple PCs). */
+function compositeStartTime(logicalStartTime, bookingId) {
+  return `${logicalStartTime}#${bookingId}`;
+}
+
 async function getHandleProfile(handle) {
   if (!process.env.HANDLES_TABLE) return null;
   const result = await ddb.get({
@@ -49,6 +61,7 @@ async function getOverlappingBookings(handle, startTime, durationMinutes, limit 
   const start = new Date(startTime);
   const windowStart = new Date(start.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const windowEnd = addMinutes(startTime, durationMinutes + 7 * 24 * 60);
+  const windowEndInclusive = windowEnd + "\uffff";
   const handlesToQuery = [handle];
   if (!handle.startsWith("voxa-")) handlesToQuery.push("voxa-" + handle);
   const all = [];
@@ -56,12 +69,12 @@ async function getOverlappingBookings(handle, startTime, durationMinutes, limit 
     const result = await ddb.query({
       TableName: process.env.BOOKINGS_TABLE,
       KeyConditionExpression: "handle = :h AND startTime BETWEEN :lo AND :hi",
-      ExpressionAttributeValues: { ":h": h, ":lo": windowStart, ":hi": windowEnd },
+      ExpressionAttributeValues: { ":h": h, ":lo": windowStart, ":hi": windowEndInclusive },
       Limit: limit
     }).promise();
     if (result.Items && result.Items.length) all.push(...result.Items);
   }
-  return all.filter((b) => slotsOverlap(b.startTime, b.durationMinutes || 0, startTime, durationMinutes));
+  return all.filter((b) => slotsOverlap(getLogicalStartTime(b), b.durationMinutes || 0, startTime, durationMinutes));
 }
 
 async function checkCapacityAndReject(handle, body, startTime, durationMinutes) {
@@ -166,7 +179,8 @@ exports.handler = async (event) => {
 
     if (method === "DELETE") {
       const handle = normalizeHandle(event.queryStringParameters?.handle || "");
-      const startTime = (event.queryStringParameters?.startTime || "").trim();
+      let startTime = (event.queryStringParameters?.startTime || "").trim();
+      const bookingId = (event.queryStringParameters?.bookingId || "").trim();
 
       if (!handle) {
         return { statusCode: 400, headers: { "content-type": "application/json" }, body: JSON.stringify({ error: "handle is required" }) };
@@ -175,13 +189,14 @@ exports.handler = async (event) => {
         return { statusCode: 400, headers: { "content-type": "application/json" }, body: JSON.stringify({ error: "startTime is required" }) };
       }
 
+      const sortKey = startTime.includes("#") ? startTime : (bookingId ? compositeStartTime(startTime, bookingId) : startTime);
+
       const callerSub = event.requestContext?.authorizer?.jwt?.claims?.sub || "";
       const callerEmail = (event.requestContext?.authorizer?.jwt?.claims?.email || "").toLowerCase();
 
-      // Fetch the booking to verify who can cancel it
       const bookingRes = await ddb.get({
         TableName: process.env.BOOKINGS_TABLE,
-        Key: { handle, startTime }
+        Key: { handle, startTime: sortKey }
       }).promise();
 
       if (!bookingRes.Item) {
@@ -192,7 +207,6 @@ exports.handler = async (event) => {
       const isSelfCancel = callerEmail && bookingEmail && bookingEmail === callerEmail;
 
       if (!isSelfCancel) {
-        // Must be owner or manager to cancel on behalf of others
         const { assertAccess } = require("./auth-helper");
         try {
           await assertAccess(handle, callerSub, callerEmail);
@@ -203,7 +217,7 @@ exports.handler = async (event) => {
 
       await ddb.delete({
         TableName: process.env.BOOKINGS_TABLE,
-        Key: { handle, startTime }
+        Key: { handle, startTime: sortKey }
       }).promise();
 
       return { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ ok: true }) };
@@ -238,19 +252,45 @@ exports.handler = async (event) => {
         };
         if (fromTime && toTime) {
           queryParams.KeyConditionExpression = "handle = :h AND startTime BETWEEN :from AND :to";
-          queryParams.ExpressionAttributeValues = { ":h": h, ":from": fromTime, ":to": toTime };
+          queryParams.ExpressionAttributeValues = { ":h": h, ":from": fromTime, ":to": toTime + "\uffff" };
         }
         const result = await ddb.query(queryParams).promise();
         if (result.Items && result.Items.length) allItems.push(...result.Items);
       }
-      allItems.sort((a, b) => (a.startTime || "").localeCompare(b.startTime || ""));
+      allItems.sort((a, b) => {
+        const ta = getLogicalStartTime(a) || "";
+        const tb = getLogicalStartTime(b) || "";
+        const byTime = ta.localeCompare(tb);
+        if (byTime !== 0) return byTime;
+        return (a.bookingId || "").localeCompare(b.bookingId || "");
+      });
+
+      const bookingsForClient = allItems.slice(0, limit).map((item) => ({
+        ...item,
+        startTime: getLogicalStartTime(item)
+      }));
+
+      // CloudWatch: log GET result for debugging (e.g. m80esports 16 Mar 9pm = 21:00 UTC)
+      if (fromTime && toTime) {
+        const count = bookingsForClient.length;
+        const at9pm = bookingsForClient.filter((b) => (b.startTime || "").includes("T21:00"));
+        console.log(JSON.stringify({
+          msg: "bookings GET",
+          handle,
+          fromTime,
+          toTime,
+          count,
+          at21: at9pm.length,
+          at21Details: at9pm.map((b) => ({ startTime: b.startTime, bookingId: b.bookingId, name: b.name }))
+        }));
+      }
 
       return {
         statusCode: 200,
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           handle,
-          bookings: allItems.slice(0, limit)
+          bookings: bookingsForClient
         })
       };
     }
@@ -266,15 +306,24 @@ exports.handler = async (event) => {
         };
       }
 
+      const claims = event.requestContext?.authorizer?.jwt?.claims || {};
       const centerName = String(body.centerName || "").trim();
       const machineType = String(body.machineType || "").trim();
       const startTime = String(body.startTime || "").trim();
       let durationMinutes = Number(body.durationMinutes || 0);
-      const name = String(body.name || "").trim();
+      let name = String(body.name || "").trim();
       const phone = String(body.phone || "").trim();
-      const email = String(body.email || "").trim();
-      const serviceId = body.serviceId != null ? String(body.serviceId).trim() : "";
-      const branchId = body.branchId != null ? String(body.branchId).trim() : "";
+      let email = String(body.email || "").trim();
+      if (!email && claims.email) {
+        email = String(claims.email).trim().toLowerCase();
+      }
+      if (!name && (claims.name || claims["cognito:username"])) {
+        name = String(claims.name || claims["cognito:username"] || "").trim();
+      }
+      let serviceId = body.serviceId != null ? String(body.serviceId).trim() : "";
+      const serviceName = String(body.serviceName || "").trim();
+      let branchId = body.branchId != null ? String(body.branchId).trim() : "";
+      const branchName = String(body.branchName || "").trim();
       const doctorId = body.doctorId != null ? String(body.doctorId).trim() : "";
       const locationId = body.locationId != null ? String(body.locationId).trim() : "";
 
@@ -314,6 +363,39 @@ exports.handler = async (event) => {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ error: "Email is required for this business." })
         };
+      }
+
+      // Resolve serviceName → serviceId if serviceId not provided
+      if (!serviceId && serviceName && process.env.SERVICES_TABLE) {
+        const svcResult = await ddb.query({
+          TableName: process.env.SERVICES_TABLE,
+          KeyConditionExpression: "handle = :h",
+          ExpressionAttributeValues: { ":h": handle }
+        }).promise();
+        const match = (svcResult.Items || []).find(
+          (s) => (s.name || "").toLowerCase() === serviceName.toLowerCase()
+        );
+        if (match) {
+          serviceId = match.serviceId;
+          if (!durationMinutes && match.durationMinutes) {
+            durationMinutes = Number(match.durationMinutes);
+          }
+        }
+      }
+
+      // Resolve branchName → branchId if branchId not provided
+      if (!branchId && branchName && process.env.BRANCHES_TABLE) {
+        const brResult = await ddb.query({
+          TableName: process.env.BRANCHES_TABLE,
+          KeyConditionExpression: "handle = :h",
+          ExpressionAttributeValues: { ":h": handle }
+        }).promise();
+        const match = (brResult.Items || []).find(
+          (b) => (b.name || "").toLowerCase() === branchName.toLowerCase()
+        );
+        if (match) {
+          branchId = match.branchId;
+        }
       }
 
       if (serviceId && !durationMinutes) {
@@ -358,10 +440,12 @@ exports.handler = async (event) => {
 
       const bookingId = body.bookingId || generateId();
       const createdAt = new Date().toISOString();
+      const compositeKey = compositeStartTime(startTime, bookingId);
 
       const item = {
         handle,
-        startTime,
+        startTime: compositeKey,
+        slotStartTime: startTime,
         bookingId,
         durationMinutes,
         name,
@@ -385,10 +469,11 @@ exports.handler = async (event) => {
 
       await upsertCustomer(handle, { name, phone, email });
 
+      const responseBooking = { ...item, startTime };
       return {
         statusCode: 201,
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ok: true, booking: item })
+        body: JSON.stringify({ ok: true, booking: responseBooking })
       };
     }
 

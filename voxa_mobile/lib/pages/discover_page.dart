@@ -15,18 +15,28 @@ class DiscoverPage extends StatefulWidget {
   State<DiscoverPage> createState() => _DiscoverPageState();
 }
 
+/// Business type filter for discover (matches backend useCaseId / category).
+class _DiscoverFilter {
+  const _DiscoverFilter({required this.label, required this.category});
+  final String label;
+  final String category;
+}
+
 class _DiscoverPageState extends State<DiscoverPage> {
   final TextEditingController _queryController = TextEditingController();
   bool _isSearching = false;
   String? _error;
   List<DiscoveryResult> _results = [];
   Position? _position;
+  String? _selectedCategory;
 
-  final List<String> _quickChips = const [
-    'Haircut in next 30 minutes',
-    'Cafe streaming IPL',
-    'MRI scan open now',
-    'Salon open nearby',
+  static const List<_DiscoverFilter> _filters = [
+    _DiscoverFilter(label: 'All', category: ''),
+    _DiscoverFilter(label: 'Gaming Cafe', category: 'gaming_cafe'),
+    _DiscoverFilter(label: 'Salon', category: 'salon'),
+    _DiscoverFilter(label: 'Clinic', category: 'clinic'),
+    _DiscoverFilter(label: 'General', category: 'general'),
+    _DiscoverFilter(label: 'Customer Support', category: 'customer_support'),
   ];
 
   @override
@@ -47,35 +57,91 @@ class _DiscoverPageState extends State<DiscoverPage> {
         locationSettings:
             const LocationSettings(accuracy: LocationAccuracy.medium),
       );
-      if (mounted) setState(() => _position = pos);
+      if (mounted) {
+        setState(() => _position = pos);
+        _loadNearby();
+      }
     } catch (_) {
       // Location unavailable — search works without it
     }
   }
 
-  Future<void> _runSearch(String query) async {
-    final trimmed = query.trim();
-    if (trimmed.isEmpty || _isSearching) return;
-
+  /// Load nearby places when we have location (no text query).
+  Future<void> _loadNearby() async {
+    if (_position == null || _isSearching) return;
     setState(() {
       _isSearching = true;
       _error = null;
-      _results = [];
     });
-
     try {
-      final params = <String, String>{'q': trimmed};
-      if (_position != null) {
-        params['lat'] = _position!.latitude.toString();
-        params['lng'] = _position!.longitude.toString();
+      final params = <String, String>{
+        'q': '',
+        'lat': _position!.latitude.toString(),
+        'lng': _position!.longitude.toString(),
+      };
+      if (_selectedCategory != null && _selectedCategory!.isNotEmpty) {
+        params['category'] = _selectedCategory!;
       }
       final uri =
           Uri.parse('$apiBase/discover').replace(queryParameters: params);
       final resp = await http.get(uri);
+      if (!mounted) return;
       if (resp.statusCode != 200) {
-        setState(() {
-          _error = 'Search failed (${resp.statusCode}).';
-        });
+        setState(() => _error = 'Search failed (${resp.statusCode}).');
+        return;
+      }
+      final decoded = json.decode(resp.body) as Map<String, dynamic>;
+      final list = (decoded['results'] as List<dynamic>? ?? [])
+          .map(
+            (e) => DiscoveryResult.fromJson(e as Map<String, dynamic>),
+          )
+          .toList();
+      setState(() => _results = list);
+    } catch (_) {
+      if (mounted) {
+        setState(() =>
+            _error = 'Could not reach Yandle. Check network/API base URL.');
+      }
+    } finally {
+      if (mounted) setState(() => _isSearching = false);
+    }
+  }
+
+  Future<void> _runSearch(String query, {String? category}) async {
+    if (_isSearching) return;
+    final useCategory = category ?? _selectedCategory;
+    final trimmed = query.trim();
+
+    setState(() {
+      _isSearching = true;
+      _error = null;
+      if (trimmed.isEmpty && useCategory == null && _position == null) {
+        _results = [];
+      }
+    });
+
+    try {
+      final params = <String, String>{};
+      if (trimmed.isNotEmpty) params['q'] = trimmed;
+      if (_position != null) {
+        params['lat'] = _position!.latitude.toString();
+        params['lng'] = _position!.longitude.toString();
+      }
+      if (useCategory != null && useCategory.isNotEmpty) {
+        params['category'] = useCategory;
+      }
+      if (!params.containsKey('q')) params['q'] = '';
+      if (trimmed.isEmpty && _position == null && (useCategory == null || useCategory.isEmpty)) {
+        setState(() => _isSearching = false);
+        return;
+      }
+
+      final uri =
+          Uri.parse('$apiBase/discover').replace(queryParameters: params);
+      final resp = await http.get(uri);
+      if (!mounted) return;
+      if (resp.statusCode != 200) {
+        setState(() => _error = 'Search failed (${resp.statusCode}).');
         return;
       }
 
@@ -86,18 +152,15 @@ class _DiscoverPageState extends State<DiscoverPage> {
           )
           .toList();
 
-      setState(() {
-        _results = list;
-      });
+      setState(() => _results = list);
     } catch (_) {
-      setState(() {
-        _error = 'Could not reach Yandle. Check network/API base URL.';
-      });
+      if (mounted) {
+        setState(() =>
+            _error = 'Could not reach Yandle. Check network/API base URL.');
+      }
     } finally {
       if (mounted) {
-        setState(() {
-          _isSearching = false;
-        });
+        setState(() => _isSearching = false);
       }
     }
   }
@@ -109,6 +172,27 @@ class _DiscoverPageState extends State<DiscoverPage> {
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri);
     }
+  }
+
+  Widget _listPlaceholder(String initial) {
+    return Container(
+      width: 56,
+      height: 56,
+      decoration: BoxDecoration(
+        color: const Color(0xFF4F46E5).withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Center(
+        child: Text(
+          initial,
+          style: const TextStyle(
+            color: Color(0xFF4F46E5),
+            fontWeight: FontWeight.bold,
+            fontSize: 18,
+          ),
+        ),
+      ),
+    );
   }
 
   void _openBusinessDetails(DiscoveryResult r) {
@@ -125,6 +209,11 @@ class _DiscoverPageState extends State<DiscoverPage> {
           hasWalkInSlots: r.realtimeAvailability?.hasWalkInSlots ?? false,
           supportsUrgentCases:
               r.realtimeAvailability?.supportsUrgentCases ?? false,
+          locationId: r.locationId,
+          branchId: r.branchId,
+          centerId: r.centerId,
+          locationName: r.locationName,
+          initialImageUrl: r.imageUrl,
         ),
       ),
     );
@@ -159,7 +248,7 @@ class _DiscoverPageState extends State<DiscoverPage> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Type what you need and Yandle finds places that can take you now.',
+                    'Search or pick a type to find businesses. Nearby places show when location is on.',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: Colors.white70,
                     ),
@@ -186,9 +275,9 @@ class _DiscoverPageState extends State<DiscoverPage> {
                             style: const TextStyle(color: Colors.white),
                             cursorColor: Colors.white70,
                             textInputAction: TextInputAction.search,
-                            onSubmitted: _runSearch,
+                            onSubmitted: (s) => _runSearch(s),
                             decoration: const InputDecoration(
-                              hintText: 'Haircut in next 15 minutes',
+                              hintText: 'Search by name or keyword',
                               hintStyle: TextStyle(color: Colors.white38),
                               border: InputBorder.none,
                             ),
@@ -200,7 +289,7 @@ class _DiscoverPageState extends State<DiscoverPage> {
                           child: FilledButton(
                             onPressed: _isSearching
                                 ? null
-                                : () => _runSearch(_queryController.text),
+                                : () => _runSearch(_queryController.text.trim()),
                             style: FilledButton.styleFrom(
                               padding:
                                   const EdgeInsets.symmetric(horizontal: 14),
@@ -227,28 +316,42 @@ class _DiscoverPageState extends State<DiscoverPage> {
                   ),
                   const SizedBox(height: 12),
                   SizedBox(
-                    height: 32,
+                    height: 36,
                     child: ListView.separated(
                       scrollDirection: Axis.horizontal,
-                      itemCount: _quickChips.length,
+                      itemCount: _filters.length,
                       separatorBuilder: (_, __) => const SizedBox(width: 8),
                       itemBuilder: (context, index) {
-                        final label = _quickChips[index];
-                        return ActionChip(
+                        final filter = _filters[index];
+                        final isSelected = _selectedCategory == filter.category;
+                        return FilterChip(
                           label: Text(
-                            label,
-                            style: const TextStyle(fontSize: 11),
+                            filter.label,
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: isSelected
+                                    ? Colors.white
+                                    : Colors.white70),
                           ),
-                          onPressed: () {
-                            _queryController.text = label;
-                            _runSearch(label);
+                          selected: isSelected,
+                          onSelected: (_) {
+                            setState(() => _selectedCategory =
+                                filter.category.isEmpty ? null : filter.category);
+                            _runSearch(_queryController.text.trim(),
+                                category: filter.category.isEmpty
+                                    ? null
+                                    : filter.category);
                           },
                           backgroundColor: const Color(0xFF020617),
-                          side: const BorderSide(color: Color(0xFF1E293B)),
+                          selectedColor: const Color(0xFF4F46E5),
+                          side: BorderSide(
+                            color: isSelected
+                                ? const Color(0xFF4F46E5)
+                                : const Color(0xFF1E293B),
+                          ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(999),
                           ),
-                          labelStyle: const TextStyle(color: Colors.white70),
                         );
                       },
                     ),
@@ -292,9 +395,10 @@ class _DiscoverPageState extends State<DiscoverPage> {
                           Text(
                             _isSearching
                                 ? 'Finding places for you…'
-                                : 'Search above to find businesses.',
+                                : 'Search or tap a type above. Turn on location to see nearby places.',
                             style: theme.textTheme.bodyMedium
                                 ?.copyWith(color: Colors.white38),
+                            textAlign: TextAlign.center,
                           ),
                         ],
                       ),
@@ -305,8 +409,12 @@ class _DiscoverPageState extends State<DiscoverPage> {
                       separatorBuilder: (_, __) => const SizedBox(height: 10),
                       itemBuilder: (context, index) {
                         final r = _results[index];
-                        final name =
+                        final baseName =
                             r.businessName ?? r.displayName ?? r.handle;
+                        final name = (r.locationName != null &&
+                                r.locationName!.isNotEmpty)
+                            ? '$baseName – ${r.locationName}'
+                            : baseName;
                         final initial =
                             name.isNotEmpty ? name[0].toUpperCase() : '?';
                         return Material(
@@ -330,25 +438,34 @@ class _DiscoverPageState extends State<DiscoverPage> {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      Container(
-                                        width: 44,
-                                        height: 44,
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF4F46E5)
-                                              .withValues(alpha: 0.15),
-                                          borderRadius:
-                                              BorderRadius.circular(12),
-                                        ),
-                                        child: Center(
-                                          child: Text(
-                                            initial,
-                                            style: const TextStyle(
-                                              color: Color(0xFF4F46E5),
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 18,
-                                            ),
-                                          ),
-                                        ),
+                                      ClipRRect(
+                                        borderRadius: BorderRadius.circular(12),
+                                        child: r.imageUrl != null &&
+                                                r.imageUrl!.isNotEmpty
+                                            ? Image.network(
+                                                r.imageUrl!,
+                                                width: 56,
+                                                height: 56,
+                                                fit: BoxFit.cover,
+                                                loadingBuilder: (_, child, progress) {
+                                                  if (progress == null) return child;
+                                                  return Container(
+                                                    width: 56,
+                                                    height: 56,
+                                                    color: const Color(0xFF1E293B),
+                                                    child: const Center(
+                                                      child: SizedBox(
+                                                        width: 20,
+                                                        height: 20,
+                                                        child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF4F46E5)),
+                                                      ),
+                                                    ),
+                                                  );
+                                                },
+                                                errorBuilder: (_, __, ___) =>
+                                                    _listPlaceholder(initial),
+                                              )
+                                            : _listPlaceholder(initial),
                                       ),
                                       const SizedBox(width: 12),
                                       Expanded(
@@ -475,13 +592,13 @@ class _DiscoverPageState extends State<DiscoverPage> {
                                   const SizedBox(height: 12),
                                   Row(
                                     children: [
-                                      if (r.phoneNumber != null &&
-                                          r.phoneNumber!.isNotEmpty) ...[
-                                        FilledButton.icon(
-                                          onPressed: () => _callBusiness(r),
-                                          icon: const Icon(Icons.call,
-                                              size: 15),
-                                          label: const Text('Call'),
+                                      Expanded(
+                                        child: FilledButton.icon(
+                                          onPressed: () =>
+                                              _openBusinessDetails(r),
+                                          icon: const Icon(
+                                              Icons.calendar_today, size: 15),
+                                          label: const Text('Book'),
                                           style: FilledButton.styleFrom(
                                             backgroundColor:
                                                 const Color(0xFF4F46E5),
@@ -495,34 +612,40 @@ class _DiscoverPageState extends State<DiscoverPage> {
                                                     FontWeight.w600),
                                           ),
                                         ),
-                                        const SizedBox(width: 8),
-                                      ],
-                                      Expanded(
-                                        child: OutlinedButton.icon(
-                                          onPressed: () =>
-                                              _openBusinessDetails(r),
-                                          icon: const Icon(
-                                              Icons
-                                                  .spatial_audio_off_rounded,
-                                              size: 15),
-                                          label:
-                                              const Text('Chat / Voice'),
-                                          style: OutlinedButton.styleFrom(
-                                            foregroundColor:
-                                                const Color(0xFF4F46E5),
-                                            side: const BorderSide(
-                                                color: Color(0xFF4F46E5)),
-                                            padding: const EdgeInsets
-                                                .symmetric(
-                                                    horizontal: 12,
-                                                    vertical: 8),
-                                            textStyle: const TextStyle(
-                                                fontSize: 13,
-                                                fontWeight:
-                                                    FontWeight.w500),
-                                          ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      OutlinedButton.icon(
+                                        onPressed: () =>
+                                            _openBusinessDetails(r),
+                                        icon: const Icon(
+                                            Icons.chat_bubble_outline,
+                                            size: 15),
+                                        label: const Text('Text'),
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor:
+                                              const Color(0xFF4F46E5),
+                                          side: const BorderSide(
+                                              color: Color(0xFF4F46E5)),
+                                          padding: const EdgeInsets
+                                              .symmetric(
+                                                  horizontal: 12,
+                                                  vertical: 8),
+                                          textStyle: const TextStyle(
+                                              fontSize: 13,
+                                              fontWeight:
+                                                  FontWeight.w500),
                                         ),
                                       ),
+                                      if (r.phoneNumber != null &&
+                                          r.phoneNumber!.isNotEmpty) ...[
+                                        const SizedBox(width: 8),
+                                        IconButton(
+                                          onPressed: () => _callBusiness(r),
+                                          icon: const Icon(Icons.call,
+                                              size: 20,
+                                              color: Color(0xFF4F46E5)),
+                                        ),
+                                      ],
                                     ],
                                   ),
                                 ],
@@ -553,6 +676,11 @@ class DiscoveryResult {
     this.hasWidget,
     this.distanceKm,
     this.realtimeAvailability,
+    this.locationId,
+    this.branchId,
+    this.centerId,
+    this.locationName,
+    this.imageUrl,
   });
 
   final String handle;
@@ -566,6 +694,12 @@ class DiscoveryResult {
   final bool? hasWidget;
   final double? distanceKm;
   final RealtimeAvailability? realtimeAvailability;
+  final String? locationId;
+  final String? branchId;
+  final String? centerId;
+  final String? locationName;
+  /// First gallery image URL from business website (for list/detail)
+  final String? imageUrl;
 
   factory DiscoveryResult.fromJson(Map<String, dynamic> json) {
     return DiscoveryResult(
@@ -586,6 +720,11 @@ class DiscoveryResult {
               json['realtimeAvailability'] as Map<String, dynamic>,
             )
           : null,
+      locationId: json['locationId'] as String?,
+      branchId: json['branchId'] as String?,
+      centerId: json['centerId'] as String?,
+      locationName: json['locationName'] as String?,
+      imageUrl: json['imageUrl'] as String?,
     );
   }
 }

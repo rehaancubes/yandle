@@ -78,7 +78,7 @@ exports.handler = async (event) => {
       };
     }
 
-    // Look up which handle owns this Voxa AI phone number
+    // Look up which handle owns this Yandle AI phone number
     const phoneResult = await ddb
       .get({
         TableName: process.env.PHONE_NUMBERS_TABLE,
@@ -92,7 +92,7 @@ exports.handler = async (event) => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           error: "Phone number not configured",
-          details: "No Yandle handle is mapped to this phone number."
+          details: "No YANDLE handle is mapped to this phone number."
         })
       };
     }

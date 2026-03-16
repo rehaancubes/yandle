@@ -5,6 +5,10 @@
  * then uploads to S3.
  *
  * Uses @breezystack/lamejs for MP3 encoding — pure JS, no ffmpeg dependency.
+ *
+ * Each chunk is timestamped relative to session start so that caller and AI
+ * audio are placed at the correct timeline offset during mixing. This prevents
+ * overlap/misalignment when there are pauses between chunks.
  */
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import lamejs from "@breezystack/lamejs";
@@ -33,21 +37,41 @@ function resample(buf, srcRate, dstRate) {
   return output;
 }
 
-// Convert Buffer of 16-bit LE samples to Int16Array
-function toInt16Array(buf) {
-  const arr = new Int16Array(buf.length / 2);
-  for (let i = 0; i < arr.length; i++) {
-    arr[i] = buf.readInt16LE(i * 2);
+/**
+ * Place timestamped chunks onto a timeline buffer at the correct sample offsets.
+ * Each chunk has { buf, ts } where ts is milliseconds from session start.
+ * Returns a single Buffer covering the full duration at the given sampleRate.
+ */
+function buildTimelineBuffer(chunks, sampleRate, totalDurationMs) {
+  const totalSamples = Math.ceil((totalDurationMs / 1000) * sampleRate);
+  const timeline = Buffer.alloc(totalSamples * 2); // 16-bit = 2 bytes per sample
+
+  for (const { buf, ts } of chunks) {
+    const offsetSamples = Math.round((ts / 1000) * sampleRate);
+    const chunkSamples = Math.floor(buf.length / 2);
+    for (let i = 0; i < chunkSamples; i++) {
+      const destIdx = offsetSamples + i;
+      if (destIdx >= 0 && destIdx < totalSamples) {
+        const sample = buf.readInt16LE(i * 2);
+        const existing = timeline.readInt16LE(destIdx * 2);
+        // Mix: clamp the sum to avoid clipping
+        const mixed = Math.max(-32768, Math.min(32767, existing + sample));
+        timeline.writeInt16LE(mixed, destIdx * 2);
+      }
+    }
   }
-  return arr;
+
+  return timeline;
 }
 
 // Mix two mono Int16Arrays of equal length into a stereo interleaved Int16Array
-function mixStereo(leftArr, rightArr, len) {
-  const stereo = new Int16Array(len * 2);
-  for (let i = 0; i < len; i++) {
-    stereo[i * 2] = leftArr[i] || 0;       // left channel = caller
-    stereo[i * 2 + 1] = rightArr[i] || 0;  // right channel = AI
+function mixStereo(leftBuf, rightBuf, totalSamples) {
+  const stereo = new Int16Array(totalSamples * 2);
+  for (let i = 0; i < totalSamples; i++) {
+    const l = i * 2 < leftBuf.length ? leftBuf.readInt16LE(i * 2) : 0;
+    const r = i * 2 < rightBuf.length ? rightBuf.readInt16LE(i * 2) : 0;
+    stereo[i * 2] = l;       // left channel = caller
+    stereo[i * 2 + 1] = r;  // right channel = AI
   }
   return stereo;
 }
@@ -57,8 +81,8 @@ export class SessionRecorder {
     this.sessionId = sessionId; // used for the S3 filename
     this.handle = handle;
     this.dbPk = dbPk || sessionId; // used as the DynamoDB pk (e.g. "SESSION#<uuid>")
-    this.callerChunks = []; // 16kHz PCM buffers
-    this.aiChunks = [];     // 24kHz PCM buffers
+    this.callerChunks = []; // { buf: Buffer, ts: number } — 16kHz PCM
+    this.aiChunks = [];     // { buf: Buffer, ts: number } — 24kHz PCM
     this.active = !!RECORDINGS_BUCKET;
     this.startedAt = Date.now();
   }
@@ -70,12 +94,12 @@ export class SessionRecorder {
 
   addCallerAudio(buf) {
     if (!this.active) return;
-    this.callerChunks.push(Buffer.from(buf));
+    this.callerChunks.push({ buf: Buffer.from(buf), ts: Date.now() - this.startedAt });
   }
 
   addAiAudio(buf) {
     if (!this.active) return;
-    this.aiChunks.push(Buffer.from(buf));
+    this.aiChunks.push({ buf: Buffer.from(buf), ts: Date.now() - this.startedAt });
   }
 
   /** Encode and upload to S3. Always marks session ENDED. Returns the S3 key or null. */
@@ -103,27 +127,29 @@ export class SessionRecorder {
       const CHANNELS = 2;
       const KBPS = 128;
 
-      // Concatenate raw PCM chunks
-      const callerRaw = this.callerChunks.length ? Buffer.concat(this.callerChunks) : Buffer.alloc(0);
-      const aiRaw = this.aiChunks.length ? Buffer.concat(this.aiChunks) : Buffer.alloc(0);
+      // Calculate total duration from wall-clock time
+      const totalDurationMs = Date.now() - this.startedAt;
+
+      // Build timeline-aligned buffers at native sample rates, then resample
+      const callerTimeline = this.callerChunks.length
+        ? buildTimelineBuffer(this.callerChunks, 16000, totalDurationMs)
+        : Buffer.alloc(0);
+      const aiTimeline = this.aiChunks.length
+        ? buildTimelineBuffer(this.aiChunks, 24000, totalDurationMs)
+        : Buffer.alloc(0);
 
       // Resample to target rate
-      const callerResampled = callerRaw.length ? resample(callerRaw, 16000, TARGET_RATE) : Buffer.alloc(0);
-      const aiResampled = aiRaw.length ? resample(aiRaw, 24000, TARGET_RATE) : Buffer.alloc(0);
+      const callerResampled = callerTimeline.length ? resample(callerTimeline, 16000, TARGET_RATE) : Buffer.alloc(0);
+      const aiResampled = aiTimeline.length ? resample(aiTimeline, 24000, TARGET_RATE) : Buffer.alloc(0);
 
-      // Normalize lengths (pad the shorter one with silence)
-      const callerSamples = callerResampled.length / 2;
-      const aiSamples = aiResampled.length / 2;
-      const totalSamples = Math.max(callerSamples, aiSamples);
+      // Total samples at target rate
+      const totalSamples = Math.max(
+        callerResampled.length / 2,
+        aiResampled.length / 2,
+        1
+      );
 
-      const callerPadded = Buffer.alloc(totalSamples * 2);
-      callerResampled.copy(callerPadded);
-      const aiPadded = Buffer.alloc(totalSamples * 2);
-      aiResampled.copy(aiPadded);
-
-      const leftArr = toInt16Array(callerPadded);
-      const rightArr = toInt16Array(aiPadded);
-      const stereo = mixStereo(leftArr, rightArr, totalSamples);
+      const stereo = mixStereo(callerResampled, aiResampled, totalSamples);
 
       // Encode to MP3
       const mp3encoder = new lamejs.Mp3Encoder(CHANNELS, TARGET_RATE, KBPS);

@@ -13,11 +13,12 @@ npm install
 
 | Variable | Description |
 |----------|-------------|
-| `SONIC_SERVICE_URL` | Voxa Sonic base URL (e.g. `https://your-sonic-alb.us-east-1.elb.amazonaws.com`) |
+| `API_BASE_URL` | Voxa API base (e.g. `https://xxx.execute-api.us-east-1.amazonaws.com`) for resolve-did |
+| `SONIC_URL` / `SONIC_SERVICE_URL` | Voxa Sonic base URL (Socket.IO) |
 | `SONIC_REGION` | AWS region for Sonic (default `us-east-1`) |
-| `VOXA_DEFAULT_HANDLE` | Handle used when DID is unknown (default `default`) |
+| `YANDLE_DEFAULT_HANDLE` / `VOXA_DEFAULT_HANDLE` | Handle used when DID is unknown (default `m80esports`). **Must exist** in the backend or profile fetch will 404. |
+| `DID_MAP` / `VOXA_DID_MAP` | JSON: DID → handle, e.g. `{"918035229486":"my-handle"}`. Checked before API; use if the DID isn’t assigned in the dashboard. |
 | `VOXA_SIP_SYSTEM_PROMPT` | Optional system prompt for SIP calls |
-| `DID_MAP` | JSON: DID → handle, e.g. `{"918035229470":"m80esports"}` (use the exact format your CTI sends in `did`) |
 | `BEDROCK_KNOWLEDGE_BASE_ID` | Optional; passed to Sonic for RAG |
 
 ## Run

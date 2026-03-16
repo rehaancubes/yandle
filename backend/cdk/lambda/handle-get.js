@@ -62,11 +62,14 @@ exports.handler = async (event) => {
       if (defaultId) profile.knowledgeBaseId = defaultId;
     }
 
-    // Attach colorTheme from website config so consumers (ShareableLink, etc.) can theme themselves
+    // Attach website config (theme, gallery images) for mobile app and ShareableLink
     if (process.env.WEBSITE_CONFIG_TABLE) {
       try {
         const wcResult = await ddb.get({ TableName: process.env.WEBSITE_CONFIG_TABLE, Key: { handle } }).promise();
-        if (wcResult.Item?.colorTheme) profile.colorTheme = wcResult.Item.colorTheme;
+        const wc = wcResult.Item || {};
+        if (wc.colorTheme) profile.colorTheme = wc.colorTheme;
+        if (Array.isArray(wc.galleryImages) && wc.galleryImages.length > 0) profile.galleryImages = wc.galleryImages;
+        if (wc.heroTagline) profile.heroTagline = wc.heroTagline;
       } catch (_) {}
     }
 

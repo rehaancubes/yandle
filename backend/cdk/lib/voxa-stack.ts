@@ -55,6 +55,11 @@ export class VoxaStack extends cdk.Stack {
       default: "",
       description: "Optional. Public HTTPS URL for Sonic (e.g. https://sonic.yourdomain.com). When set, clients use wss:// for voice. Leave empty to use ALB http URL."
     });
+    const callcentralEC2RoleNameParam = new cdk.CfnParameter(this, "CallcentralEC2RoleName", {
+      type: "String",
+      default: "callcentralEC2",
+      description: "Optional. IAM role name for EC2 (e.g. SIP trunk) that needs PhoneNumbersTable read for DID lookup. Same account as stack. Leave empty to skip grant."
+    });
 
     const conversationsTable = new ddb.Table(this, "ConversationsTable", {
       partitionKey: { name: "pk", type: ddb.AttributeType.STRING },
@@ -84,6 +89,11 @@ export class VoxaStack extends cdk.Stack {
     bookingsTable.addGlobalSecondaryIndex({
       indexName: "BookingsEmailIndex",
       partitionKey: { name: "email", type: ddb.AttributeType.STRING },
+      sortKey: { name: "startTime", type: ddb.AttributeType.STRING }
+    });
+    bookingsTable.addGlobalSecondaryIndex({
+      indexName: "BookingsPhoneIndex",
+      partitionKey: { name: "phone", type: ddb.AttributeType.STRING },
       sortKey: { name: "startTime", type: ddb.AttributeType.STRING }
     });
 
@@ -213,6 +223,37 @@ export class VoxaStack extends cdk.Stack {
       sortKey: { name: "createdAt", type: ddb.AttributeType.STRING }
     });
 
+    // Requests table — callback/contact requests for general businesses
+    const requestsTable = new ddb.Table(this, "RequestsTable", {
+      partitionKey: { name: "handle", type: ddb.AttributeType.STRING },
+      sortKey: { name: "requestId", type: ddb.AttributeType.STRING },
+      billingMode: ddb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY
+    });
+    requestsTable.addGlobalSecondaryIndex({
+      indexName: "HandleCreatedAtIndex",
+      partitionKey: { name: "handle", type: ddb.AttributeType.STRING },
+      sortKey: { name: "createdAt", type: ddb.AttributeType.STRING }
+    });
+
+    // Tickets table — support tickets for customer_support businesses
+    const ticketsTable = new ddb.Table(this, "TicketsTable", {
+      partitionKey: { name: "handle", type: ddb.AttributeType.STRING },
+      sortKey: { name: "ticketId", type: ddb.AttributeType.STRING },
+      billingMode: ddb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY
+    });
+    ticketsTable.addGlobalSecondaryIndex({
+      indexName: "HandleStatusIndex",
+      partitionKey: { name: "handle", type: ddb.AttributeType.STRING },
+      sortKey: { name: "status", type: ddb.AttributeType.STRING }
+    });
+    ticketsTable.addGlobalSecondaryIndex({
+      indexName: "PhoneIndex",
+      partitionKey: { name: "phone", type: ddb.AttributeType.STRING },
+      sortKey: { name: "createdAt", type: ddb.AttributeType.STRING }
+    });
+
     // Website config table — stores website customization per business
     const websiteConfigTable = new ddb.Table(this, "WebsiteConfigTable", {
       partitionKey: { name: "handle", type: ddb.AttributeType.STRING },
@@ -294,6 +335,12 @@ export class VoxaStack extends cdk.Stack {
       sortKey: { name: "handle", type: ddb.AttributeType.STRING }
     });
 
+    handlesTable.addGlobalSecondaryIndex({
+      indexName: "OwnerEmailIndex",
+      partitionKey: { name: "ownerEmail", type: ddb.AttributeType.STRING },
+      sortKey: { name: "handle", type: ddb.AttributeType.STRING }
+    });
+
     const userPool = new cognito.UserPool(this, "VoxaUserPool", {
       selfSignUpEnabled: true,
       signInAliases: { email: true },
@@ -310,8 +357,8 @@ export class VoxaStack extends cdk.Stack {
     const logoutUrlList = cdk.Fn.split(",", webLogoutUrls.valueAsString);
     const userPoolClient = userPool.addClient("VoxaWebClient", {
       authFlows: {
-        userSrp: true,
-        userPassword: true
+        custom: true,
+        adminUserPassword: true,
       },
       generateSecret: false,
       oAuth: {
@@ -325,11 +372,62 @@ export class VoxaStack extends cdk.Stack {
       supportedIdentityProviders: [cognito.UserPoolClientIdentityProvider.COGNITO]
     });
 
+    const cfnClient = userPoolClient.node.defaultChild as cognito.CfnUserPoolClient | undefined;
+    if (cfnClient) {
+      cfnClient.addPropertyOverride("AccessTokenValidity", 86400);
+      cfnClient.addPropertyOverride("IdTokenValidity", 86400);
+      cfnClient.addPropertyOverride("RefreshTokenValidity", 31536000);
+      cfnClient.addPropertyOverride("TokenValidityUnits", {
+        AccessToken: "seconds",
+        IdToken: "seconds",
+        RefreshToken: "seconds"
+      });
+    }
+
     const userPoolDomain = userPool.addDomain("VoxaUserPoolDomain", {
       cognitoDomain: {
         domainPrefix: cognitoDomainPrefix.valueAsString
       }
     });
+
+    // Layer with aws-sdk (Node 20 runtimes don't bundle it)
+    const awsSdkLayer = new lambda.LayerVersion(this, "AwsSdkLayer", {
+      code: lambda.Code.fromAsset(path.join(__dirname, "..", "lambda-layer")),
+      compatibleRuntimes: [lambda.Runtime.NODEJS_20_X],
+      description: "aws-sdk v2 for VOXA Lambdas"
+    });
+
+    // Cognito CUSTOM_AUTH triggers for phone+OTP
+    const authTriggerCode = lambda.Code.fromAsset(path.join(__dirname, ".."), {
+      exclude: ["cdk.out", "node_modules", ".git"],
+    });
+    const defineAuthFn = new lambda.Function(this, "DefineAuthChallengeFn", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: "lambda/define-auth-challenge.handler",
+      code: authTriggerCode,
+    });
+    const createAuthFn = new lambda.Function(this, "CreateAuthChallengeFn", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: "lambda/create-auth-challenge.handler",
+      code: authTriggerCode,
+      layers: [awsSdkLayer],
+      environment: {
+        SENDER_EMAIL: "rehaan@mobil80.com",
+      },
+    });
+    createAuthFn.addToRolePolicy(new iam.PolicyStatement({
+      actions: ["sns:Publish", "ses:SendEmail", "ses:SendRawEmail"],
+      resources: ["*"],
+    }));
+    const verifyAuthFn = new lambda.Function(this, "VerifyAuthChallengeFn", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: "lambda/verify-auth-challenge.handler",
+      code: authTriggerCode,
+    });
+
+    userPool.addTrigger(cognito.UserPoolOperation.DEFINE_AUTH_CHALLENGE, defineAuthFn);
+    userPool.addTrigger(cognito.UserPoolOperation.CREATE_AUTH_CHALLENGE, createAuthFn);
+    userPool.addTrigger(cognito.UserPoolOperation.VERIFY_AUTH_CHALLENGE_RESPONSE, verifyAuthFn);
 
     const vpc = new ec2.Vpc(this, "VoxaVpc", {
       natGateways: 1,
@@ -363,7 +461,9 @@ export class VoxaStack extends cdk.Stack {
         TOKENS_TABLE: tokensTable.tableName,
         CONVERSATIONS_TABLE: conversationsTable.tableName,
         RECORDINGS_BUCKET: recordingsBucket.bucketName,
-        CREDITS_TABLE: creditsTable.tableName
+        CREDITS_TABLE: creditsTable.tableName,
+        REQUESTS_TABLE: requestsTable.tableName,
+        TICKETS_TABLE: ticketsTable.tableName
       },
       portMappings: [{ containerPort: 80 }]
     });
@@ -424,8 +524,10 @@ export class VoxaStack extends cdk.Stack {
       CONVERSATIONS_TABLE: conversationsTable.tableName,
       HANDLES_TABLE: handlesTable.tableName,
       HANDLES_OWNER_INDEX: "OwnerIndex",
+      HANDLES_OWNER_EMAIL_INDEX: "OwnerEmailIndex",
       BOOKINGS_TABLE: bookingsTable.tableName,
       BOOKINGS_EMAIL_INDEX: "BookingsEmailIndex",
+      BOOKINGS_PHONE_INDEX: "BookingsPhoneIndex",
       CUSTOMERS_TABLE: customersTable.tableName,
       CUSTOMERS_LAST_SEEN_INDEX: "HandleLastSeenIndex",
       BUSINESS_CONFIG_TABLE: businessConfigTable.tableName,
@@ -443,6 +545,8 @@ export class VoxaStack extends cdk.Stack {
       CREDITS_TABLE: creditsTable.tableName,
       PAYMENTS_TABLE: paymentsTable.tableName,
       PAYMENTS_HANDLE_INDEX: "HandleIndex",
+      REQUESTS_TABLE: requestsTable.tableName,
+      TICKETS_TABLE: ticketsTable.tableName,
       WEBSITE_CONFIG_TABLE: websiteConfigTable.tableName,
       WEBSITE_ASSETS_BUCKET: websiteAssetsBucket.bucketName,
       RECORDINGS_BUCKET: recordingsBucket.bucketName,
@@ -452,13 +556,6 @@ export class VoxaStack extends cdk.Stack {
       BEDROCK_REGION: cdk.Stack.of(this).region,
       COGNITO_USER_POOL_ID: userPool.userPoolId
     };
-    // Layer with aws-sdk (Node 18+ runtimes don't bundle it). Build: cd lambda-layer/nodejs && npm install --production
-    const awsSdkLayer = new lambda.LayerVersion(this, "AwsSdkLayer", {
-      code: lambda.Code.fromAsset(path.join(__dirname, "..", "lambda-layer")),
-      compatibleRuntimes: [lambda.Runtime.NODEJS_20_X],
-      description: "aws-sdk v2 for VOXA Lambdas"
-    });
-
     const lambdaCode = lambda.Code.fromAsset(path.join(__dirname, ".."), {
       exclude: ["cdk.out", "node_modules", ".git"]
     });
@@ -556,7 +653,8 @@ export class VoxaStack extends cdk.Stack {
       handler: "lambda/message.handler",
       code: lambdaCode,
       environment: commonEnv,
-      layers: layer
+      layers: layer,
+      timeout: cdk.Duration.seconds(30),
     });
 
     const upsertHandleFn = new lambda.Function(this, "UpsertHandleFunction", {
@@ -578,6 +676,14 @@ export class VoxaStack extends cdk.Stack {
       handler: "lambda/handle-get.handler",
       code: lambdaCode,
       environment: { ...commonEnv, DEFAULT_KNOWLEDGE_BASE_ID: knowledgeBaseIdParam.valueAsString },
+      layers: layer
+    });
+
+    const publicSlotsFn = new lambda.Function(this, "PublicSlotsFunction", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: "lambda/public-slots.handler",
+      code: lambdaCode,
+      environment: commonEnv,
       layers: layer
     });
 
@@ -633,6 +739,9 @@ export class VoxaStack extends cdk.Stack {
     servicesTable.grantReadData(getHandleFn);
     branchesTable.grantReadData(getHandleFn);
     gamingCentersTable.grantReadData(getHandleFn);
+    businessConfigTable.grantReadData(publicSlotsFn);
+    bookingsTable.grantReadData(publicSlotsFn);
+    gamingCentersTable.grantReadData(publicSlotsFn);
     handlesTable.grantReadData(listMyHandlesFn);
     membersTable.grantReadData(listMyHandlesFn); // needed to look up manager handles via EmailIndex
     // Allow Sonic ECS task role to read/write bookings and customers via the booking tools
@@ -645,6 +754,8 @@ export class VoxaStack extends cdk.Stack {
     handlesTable.grantReadData(createSessionFn); // session Lambda reads handle profile for persona
     handlesTable.grantReadData(messageFn); // message Lambda reads handle profile for knowledge base + persona
     bookingsTable.grantReadWriteData(messageFn); // message Lambda creates bookings via AI tool calls
+    requestsTable.grantReadWriteData(messageFn); // message Lambda creates callback requests for general use case (chat → Requests tab)
+    customersTable.grantReadWriteData(messageFn); // message Lambda upserts customer when general business create_request is used
     handlesTable.grantReadData(sonicSessionFn);
 
     const bookingsFn = new lambda.Function(this, "BookingsFunction", {
@@ -854,6 +965,18 @@ export class VoxaStack extends cdk.Stack {
     handlesTable.grantReadWriteData(phoneNumbersManageFn);
     paymentsTable.grantReadWriteData(phoneNumbersManageFn);
 
+    // Grant Callcentral EC2 role (SIP trunk) read access to PhoneNumbersTable for DID → handle lookup
+    const callcentralEC2RoleName = callcentralEC2RoleNameParam.valueAsString;
+    if (callcentralEC2RoleName) {
+      const callcentralEC2Role = iam.Role.fromRoleArn(
+        this,
+        "CallcentralEC2Role",
+        `arn:aws:iam::${this.account}:role/${callcentralEC2RoleName}`,
+        { mutable: false }
+      );
+      phoneNumbersTable.grantReadData(callcentralEC2Role);
+    }
+
     // BMS (Business Management System) Lambda — super-admin only
     const bmsFn = new lambda.Function(this, "BmsFunction", {
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -950,12 +1073,68 @@ export class VoxaStack extends cdk.Stack {
     bookingsTable.grantReadData(myBookingsFn);
     handlesTable.grantReadData(myBookingsFn);
 
+    // Requests Lambda (general business type)
+    const requestsFn = new lambda.Function(this, "RequestsFunction", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: "lambda/requests.handler",
+      code: lambdaCode,
+      environment: commonEnv,
+      layers: layer
+    });
+    requestsTable.grantReadWriteData(requestsFn);
+    handlesTable.grantReadData(requestsFn);
+    membersTable.grantReadData(requestsFn);
+
+    // Tickets Lambda (customer_support business type)
+    const ticketsFn = new lambda.Function(this, "TicketsFunction", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: "lambda/tickets.handler",
+      code: lambdaCode,
+      environment: commonEnv,
+      layers: layer
+    });
+    ticketsTable.grantReadWriteData(ticketsFn);
+    handlesTable.grantReadData(ticketsFn);
+    membersTable.grantReadData(ticketsFn);
+
+    // Website Chat Lambda (AI chatbot for website editing using Titan Text)
+    const websiteChatFn = new lambda.Function(this, "WebsiteChatFunction", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: "lambda/website-chat.handler",
+      code: lambdaCode,
+      environment: commonEnv,
+      layers: layer,
+      timeout: cdk.Duration.seconds(30)
+    });
+    websiteChatFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["bedrock:InvokeModel"],
+        resources: ["*"]
+      })
+    );
+    handlesTable.grantReadData(websiteChatFn);
+    membersTable.grantReadData(websiteChatFn);
+
+    // Support Config Lambda (customer_support categories & SLA)
+    const supportConfigFn = new lambda.Function(this, "SupportConfigFunction", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: "lambda/support-config.handler",
+      code: lambdaCode,
+      environment: commonEnv,
+      layers: layer
+    });
+    businessConfigTable.grantReadWriteData(supportConfigFn);
+    handlesTable.grantReadData(supportConfigFn);
+    membersTable.grantReadData(supportConfigFn);
+
     // Grant Sonic ECS task role access to new tables + recordings bucket
     catalogTable.grantReadData(taskDefinition.taskRole);
     tokensTable.grantReadWriteData(taskDefinition.taskRole);
     conversationsTable.grantReadWriteData(taskDefinition.taskRole);
     recordingsBucket.grantPut(taskDefinition.taskRole);
     creditsTable.grantReadWriteData(taskDefinition.taskRole);
+    requestsTable.grantReadWriteData(taskDefinition.taskRole);
+    ticketsTable.grantReadWriteData(taskDefinition.taskRole);
 
     // Grant credits table to lambdas that deduct credits
     creditsTable.grantReadWriteData(messageFn);
@@ -981,6 +1160,10 @@ export class VoxaStack extends cdk.Stack {
     servicesTable.grantReadData(bookingsFn);
     callersTable.grantReadWriteData(discoverySearchFn);
     handlesTable.grantReadData(discoverySearchFn);
+    locationsTable.grantReadData(discoverySearchFn);
+    branchesTable.grantReadData(discoverySearchFn);
+    gamingCentersTable.grantReadData(discoverySearchFn);
+    websiteConfigTable.grantReadData(discoverySearchFn);
 
     phoneNumbersTable.grantReadData(phoneEntryFn);
     callersTable.grantReadWriteData(phoneEntryFn);
@@ -1007,6 +1190,33 @@ export class VoxaStack extends cdk.Stack {
         resources: ["*"]
       })
     );
+
+    // Phone+OTP auth Lambda (unauthenticated — handles its own auth)
+    const phoneAuthFn = new lambda.Function(this, "PhoneAuthFunction", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: "lambda/phone-auth.handler",
+      code: lambdaCode,
+      timeout: cdk.Duration.seconds(15),
+      environment: {
+        USER_POOL_ID: userPool.userPoolId,
+        CLIENT_ID: userPoolClient.userPoolClientId,
+        FIREBASE_PROJECT_ID: "yandle-abb4c",
+      },
+      layers: layer
+    });
+    phoneAuthFn.addToRolePolicy(new iam.PolicyStatement({
+      actions: [
+        "cognito-idp:AdminGetUser",
+        "cognito-idp:AdminCreateUser",
+        "cognito-idp:AdminSetUserPassword",
+        "cognito-idp:AdminInitiateAuth",
+        "cognito-idp:AdminRespondToAuthChallenge",
+        "cognito-idp:AdminUpdateUserAttributes",
+        "cognito-idp:AdminDeleteUser",
+        "cognito-idp:ListUsers",
+      ],
+      resources: [userPool.userPoolArn],
+    }));
 
     const httpApi = new apigwv2.HttpApi(this, "VoxaHttpApi", {
       apiName: "voxa-api",
@@ -1064,6 +1274,12 @@ export class VoxaStack extends cdk.Stack {
     });
 
     httpApi.addRoutes({
+      path: "/public/{handle}/slots",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration("PublicSlotsIntegration", publicSlotsFn)
+    });
+
+    httpApi.addRoutes({
       path: "/public/{handle}/conversations",
       methods: [apigwv2.HttpMethod.GET],
       integration: new integrations.HttpLambdaIntegration("HandleConversationsIntegration", getHandleConversationsFn),
@@ -1074,6 +1290,25 @@ export class VoxaStack extends cdk.Stack {
       path: "/sonic/config",
       methods: [apigwv2.HttpMethod.GET],
       integration: new integrations.HttpLambdaIntegration("SonicConfigIntegration", sonicConfigFn)
+    });
+
+    httpApi.addRoutes({
+      path: "/auth/phone",
+      methods: [apigwv2.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration("PhoneAuthIntegration", phoneAuthFn)
+    });
+
+    httpApi.addRoutes({
+      path: "/auth/email",
+      methods: [apigwv2.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration("EmailAuthIntegration", phoneAuthFn)
+    });
+
+    httpApi.addRoutes({
+      path: "/auth/profile",
+      methods: [apigwv2.HttpMethod.PUT],
+      integration: new integrations.HttpLambdaIntegration("AuthProfileIntegration", phoneAuthFn),
+      authorizer: jwtAuthorizer
     });
 
     httpApi.addRoutes({
@@ -1329,6 +1564,36 @@ export class VoxaStack extends cdk.Stack {
       path: "/website/upload-image",
       methods: [apigwv2.HttpMethod.POST],
       integration: new integrations.HttpLambdaIntegration("WebsiteUploadIntegration", websiteUploadFn),
+      authorizer: jwtAuthorizer
+    });
+    httpApi.addRoutes({
+      path: "/website/chat",
+      methods: [apigwv2.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration("WebsiteChatIntegration", websiteChatFn),
+      authorizer: jwtAuthorizer
+    });
+
+    // Requests endpoints (general business type)
+    httpApi.addRoutes({
+      path: "/requests",
+      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST, apigwv2.HttpMethod.PUT, apigwv2.HttpMethod.DELETE],
+      integration: new integrations.HttpLambdaIntegration("RequestsIntegration", requestsFn),
+      authorizer: jwtAuthorizer
+    });
+
+    // Tickets endpoints (customer_support business type)
+    httpApi.addRoutes({
+      path: "/tickets",
+      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST, apigwv2.HttpMethod.PUT, apigwv2.HttpMethod.DELETE],
+      integration: new integrations.HttpLambdaIntegration("TicketsIntegration", ticketsFn),
+      authorizer: jwtAuthorizer
+    });
+
+    // Support config endpoints
+    httpApi.addRoutes({
+      path: "/support/config",
+      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration("SupportConfigIntegration", supportConfigFn),
       authorizer: jwtAuthorizer
     });
 

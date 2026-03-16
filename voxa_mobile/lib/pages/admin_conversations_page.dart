@@ -128,7 +128,7 @@ class _AdminConversationsPageState extends State<AdminConversationsPage> {
               ),
             ),
             if (_loading)
-              Expanded(
+               Expanded(
                 child: Center(
                   child:
                       CircularProgressIndicator(color: widget.themeColor),
@@ -152,7 +152,7 @@ class _AdminConversationsPageState extends State<AdminConversationsPage> {
                 ),
               )
             else if (_conversations.isEmpty)
-              Expanded(
+              const Expanded(
                 child: Center(
                   child: Text('No conversations yet',
                       style: TextStyle(color: Colors.white54)),
@@ -289,9 +289,9 @@ class _AdminConversationsPageState extends State<AdminConversationsPage> {
                                       const SizedBox(height: 10),
                                     ],
                                     if (_loadingMessages)
-                                      Center(
+                                       Center(
                                         child: Padding(
-                                          padding: const EdgeInsets.all(16),
+                                          padding: EdgeInsets.all(16),
                                           child:
                                               CircularProgressIndicator(
                                             color: widget.themeColor,

@@ -33,6 +33,82 @@ function haversineDistanceKm(a, b) {
   return R * c;
 }
 
+/**
+ * Collect all (lat, lng, address, locationId, locationName, type) points for a handle.
+ * Each point has: lat, lng, address, locationId?, branchId?, centerId?, locationName, locationType.
+ * If no geo points exist, returns one virtual point with handle-level address for a single listing.
+ */
+function getLocationPoints(handleItem, locations, branches, centers) {
+  const points = [];
+  if (typeof handleItem.geoLat === "number" && typeof handleItem.geoLng === "number") {
+    points.push({
+      lat: handleItem.geoLat,
+      lng: handleItem.geoLng,
+      address: handleItem.address || "",
+      locationId: null,
+      branchId: null,
+      centerId: null,
+      locationName: null,
+      locationType: "handle"
+    });
+  }
+  for (const loc of locations) {
+    if (typeof loc.geoLat === "number" && typeof loc.geoLng === "number") {
+      points.push({
+        lat: loc.geoLat,
+        lng: loc.geoLng,
+        address: loc.address || loc.name || "",
+        locationId: loc.locationId || null,
+        branchId: null,
+        centerId: null,
+        locationName: loc.name || "",
+        locationType: "location"
+      });
+    }
+  }
+  for (const br of branches) {
+    if (typeof br.geoLat === "number" && typeof br.geoLng === "number") {
+      points.push({
+        lat: br.geoLat,
+        lng: br.geoLng,
+        address: br.address || br.location || br.name || "",
+        locationId: null,
+        branchId: br.branchId || null,
+        centerId: null,
+        locationName: br.name || "",
+        locationType: "branch"
+      });
+    }
+  }
+  for (const c of centers) {
+    if (typeof c.geoLat === "number" && typeof c.geoLng === "number") {
+      points.push({
+        lat: c.geoLat,
+        lng: c.geoLng,
+        address: c.address || c.location || c.name || "",
+        locationId: null,
+        branchId: null,
+        centerId: c.centerId || null,
+        locationName: c.name || "",
+        locationType: "center"
+      });
+    }
+  }
+  if (points.length === 0) {
+    points.push({
+      lat: null,
+      lng: null,
+      address: handleItem.address || "",
+      locationId: null,
+      branchId: null,
+      centerId: null,
+      locationName: null,
+      locationType: "handle"
+    });
+  }
+  return points;
+}
+
 exports.handler = async (event) => {
   try {
     if (!process.env.HANDLES_TABLE) {
@@ -60,15 +136,48 @@ exports.handler = async (event) => {
     const city = (qs.city || "").toString().trim().toLowerCase();
     const categoryHint = (qs.category || "").toString().trim().toLowerCase();
     const isUrgent = /now|urgent|asap|immediately|tonight|today/.test(q);
+    if (categoryHint) {
+      console.log("[discovery-search] category filter:", categoryHint);
+    }
 
-    const scanResult = await ddb
-      .scan({
-        TableName: process.env.HANDLES_TABLE,
-        Limit: 200
-      })
-      .promise();
+    const [handlesResult, locationsResult, branchesResult, centersResult] = await Promise.all([
+      ddb.scan({ TableName: process.env.HANDLES_TABLE, Limit: 200 }).promise(),
+      process.env.LOCATIONS_TABLE
+        ? ddb.scan({ TableName: process.env.LOCATIONS_TABLE, Limit: 500 }).promise()
+        : Promise.resolve({ Items: [] }),
+      process.env.BRANCHES_TABLE
+        ? ddb.scan({ TableName: process.env.BRANCHES_TABLE, Limit: 500 }).promise()
+        : Promise.resolve({ Items: [] }),
+      process.env.GAMING_CENTERS_TABLE
+        ? ddb.scan({ TableName: process.env.GAMING_CENTERS_TABLE, Limit: 500 }).promise()
+        : Promise.resolve({ Items: [] })
+    ]);
 
-    const items = Array.isArray(scanResult.Items) ? scanResult.Items : [];
+    const items = Array.isArray(handlesResult.Items) ? handlesResult.Items : [];
+    const locationsByHandle = {};
+    for (const loc of locationsResult.Items || []) {
+      const h = loc.handle;
+      if (h) {
+        if (!locationsByHandle[h]) locationsByHandle[h] = [];
+        locationsByHandle[h].push(loc);
+      }
+    }
+    const branchesByHandle = {};
+    for (const br of branchesResult.Items || []) {
+      const h = br.handle;
+      if (h) {
+        if (!branchesByHandle[h]) branchesByHandle[h] = [];
+        branchesByHandle[h].push(br);
+      }
+    }
+    const centersByHandle = {};
+    for (const c of centersResult.Items || []) {
+      const h = c.handle;
+      if (h) {
+        if (!centersByHandle[h]) centersByHandle[h] = [];
+        centersByHandle[h].push(c);
+      }
+    }
 
     const results = [];
 
@@ -78,12 +187,20 @@ exports.handler = async (event) => {
 
       const displayName = item.displayName || handle;
       const businessName = item.businessName || displayName;
-      const category = (item.category || "").toString().toLowerCase();
-      const address = item.address || "";
+      const useCaseId = (item.useCaseId || "").toString().toLowerCase();
+      const category = (item.category || item.useCaseId || "").toString().toLowerCase();
       const cityField = (item.city || "").toString().toLowerCase();
       const tags = Array.isArray(item.tags) ? item.tags.map((t) => String(t).toLowerCase()) : [];
       const services = Array.isArray(item.services) ? item.services : [];
       const realtimeAvailability = item.realtimeAvailability || {};
+
+      const locationPoints = getLocationPoints(
+        item,
+        locationsByHandle[handle] || [],
+        branchesByHandle[handle] || [],
+        centersByHandle[handle] || []
+      );
+      const defaultAddress = item.address || (locationPoints.length > 0 ? locationPoints[0].address : "");
 
       let score = 0;
       const reasons = [];
@@ -98,7 +215,7 @@ exports.handler = async (event) => {
           businessName,
           category,
           cityField,
-          address,
+          defaultAddress,
           item.knowledgeSummary || ""
         ]
           .join(" ")
@@ -125,9 +242,17 @@ exports.handler = async (event) => {
         }
       }
 
-      if (categoryHint && category === categoryHint) {
-        score += 2;
-        reasons.push(`category matches: ${categoryHint}`);
+      if (categoryHint) {
+        const match = category === categoryHint || useCaseId === categoryHint;
+        if (match) {
+          score += 5;
+          reasons.push(`category matches: ${categoryHint}`);
+        } else {
+          if (process.env.LOG_LEVEL === "debug") {
+            console.log("[discovery-search] handle skipped (category mismatch):", handle, "useCaseId:", useCaseId, "category:", category);
+          }
+          continue;
+        }
       }
 
       if (city && cityField && cityField === city) {
@@ -145,41 +270,70 @@ exports.handler = async (event) => {
         reasons.push("marked as urgent-capable");
       }
 
-      let distanceKm;
-      if (lat != null && lng != null && typeof item.geoLat === "number" && typeof item.geoLng === "number") {
-        distanceKm = haversineDistanceKm(
-          { lat, lng },
-          { lat: item.geoLat, lng: item.geoLng }
-        );
-        if (typeof distanceKm === "number") {
-          const proximityBoost = Math.max(0, 5 - Math.min(distanceKm, 20) / 4);
-          score += proximityBoost;
-          reasons.push("boosted by proximity");
-        }
-      }
-
       if (score <= 0) continue;
 
-      results.push({
-        handle,
-        displayName,
-        businessName,
-        category: item.category || null,
-        address,
-        city: item.city || null,
-        phoneNumber: item.phoneNumber || null,
-        hasAiPhone: item.hasAiPhone === true,
-        hasWidget: item.hasWidget === true,
-        planTier: item.planTier || null,
-        realtimeAvailability,
-        services,
-        distanceKm: typeof distanceKm === "number" ? Number(distanceKm.toFixed(1)) : undefined,
-        matchScore: Number(score.toFixed(2)),
-        reasons
-      });
+      for (const point of locationPoints) {
+        let distanceKm;
+        const addressForResult = point.address || defaultAddress;
+        let rowScore = score;
+        const rowReasons = [...reasons];
+        if (lat != null && lng != null && typeof point.lat === "number" && typeof point.lng === "number") {
+          distanceKm = haversineDistanceKm({ lat, lng }, { lat: point.lat, lng: point.lng });
+          if (typeof distanceKm === "number") {
+            const proximityBoost = Math.max(0, 5 - Math.min(distanceKm, 20) / 4);
+            rowScore += proximityBoost;
+            rowReasons.push("boosted by proximity");
+          }
+        } else if (lat != null && lng != null && typeof item.geoLat === "number" && typeof item.geoLng === "number") {
+          distanceKm = haversineDistanceKm({ lat, lng }, { lat: item.geoLat, lng: item.geoLng });
+          if (typeof distanceKm === "number") {
+            const proximityBoost = Math.max(0, 5 - Math.min(distanceKm, 20) / 4);
+            rowScore += proximityBoost;
+            rowReasons.push("boosted by proximity");
+          }
+        }
+
+        results.push({
+          handle,
+          displayName,
+          businessName,
+          category: item.category || item.useCaseId || null,
+          address: addressForResult,
+          city: item.city || null,
+          phoneNumber: item.phoneNumber || null,
+          hasAiPhone: item.hasAiPhone === true,
+          hasWidget: item.hasWidget === true,
+          planTier: item.planTier || null,
+          realtimeAvailability,
+          services,
+          distanceKm: typeof distanceKm === "number" ? Number(distanceKm.toFixed(1)) : undefined,
+          matchScore: Number(rowScore.toFixed(2)),
+          reasons: rowReasons,
+          locationId: point.locationId || undefined,
+          branchId: point.branchId || undefined,
+          centerId: point.centerId || undefined,
+          locationName: point.locationName || undefined
+        });
+      }
     }
 
     results.sort((a, b) => b.matchScore - a.matchScore);
+
+    // Attach first gallery image URL for each result (from website config)
+    if (process.env.WEBSITE_CONFIG_TABLE && results.length > 0) {
+      const handles = [...new Set(results.map((r) => r.handle))];
+      const configMap = {};
+      try {
+        for (const handle of handles) {
+          const wr = await ddb.get({ TableName: process.env.WEBSITE_CONFIG_TABLE, Key: { handle } }).promise();
+          const gallery = wr.Item?.galleryImages;
+          if (Array.isArray(gallery) && gallery.length > 0 && typeof gallery[0] === "string") {
+            configMap[handle] = gallery[0];
+          }
+        }
+        results.forEach((r) => { r.imageUrl = configMap[r.handle] || undefined; });
+      } catch (_) {}
+    }
 
     return {
       statusCode: 200,

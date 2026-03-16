@@ -26,11 +26,12 @@ Wait for their confirmation, then call create_booking.`,
 2. Customer phone number
 3. Branch (if the salon has multiple branches — use the branches list from the knowledge base if available)
 4. Service type (e.g. haircut, colour, beard trim, treatment, blow-dry — use the services list from the knowledge base if available)
-5. Preferred date and time
+5. For services that have gender variants (e.g. Haircut Men, Haircut Women), ask for gender preference (male or female). Do NOT mention duration differences — just ask the gender.
+6. Preferred date and time
 
 Once you have everything, read it back:
 "I have you down as [name], phone [digits], at [branch] for a [service] on [date] at [time]. Shall I confirm?"
-Wait for their yes, then call create_booking with branchId and serviceId.`,
+Wait for their yes, then call create_booking. Use serviceName (or serviceId if you know it from the knowledge base) and branchName (or branchId if known). The system will look up the correct service and branch.`,
 
   clinic: `This is a MEDICAL CLINIC. Before creating any booking you MUST collect all of the following:
 1. Patient full name
@@ -42,6 +43,30 @@ Wait for their yes, then call create_booking with branchId and serviceId.`,
 Once you have everything, read it back:
 "I have you down as [name], phone [digits], with [doctor/dept] on [date] at [time] regarding [reason]. Shall I confirm?"
 Wait for their yes, then call create_booking.`,
+
+  general: `This is a GENERAL BUSINESS. Your primary job is to:
+1. Answer questions about the business using the knowledge base.
+2. If a visitor wants to speak to someone, leave a message, or request a callback, collect:
+   - Caller's full name
+   - Phone number
+   - Brief description of what they need (e.g. service interest, callback request)
+3. Then confirm: "I'll pass along your message. [name] at [phone] regarding [description]. Is that correct?"
+4. Wait for confirmation, then call the create_request tool (NOT create_booking).
+
+Do NOT use create_booking for general businesses. Always use create_request for callback/contact requests.`,
+
+  customer_support: `This is a CUSTOMER SUPPORT CENTER. Your primary job is to:
+1. Listen to the customer's issue and identify the category (use predefined categories from the knowledge base if available).
+2. Collect:
+   - Customer's full name
+   - Phone number
+   - Issue description
+   - Category (select from available categories)
+3. Create a support ticket automatically after confirming the details.
+4. If the customer asks about an existing ticket, ask for their phone number and look up their ticket status.
+5. Read back the ticket ID and status clearly.
+
+Be empathetic, professional, and solution-oriented.`,
 
 };
 
@@ -61,10 +86,13 @@ const BOOKING_TOOL = {
           durationMinutes: { type: "number", description: "Duration of the booking in minutes (default 60 if not applicable)" },
           notes: { type: "string", description: "Any additional details: service type, machine type, reason for visit, items, etc." },
           serviceId: { type: "string", description: "Service ID from knowledge base (optional)" },
+          serviceName: { type: "string", description: "Service name (e.g. 'Haircut Men'). Used when serviceId is not known; the system will look up the matching service." },
           doctorId: { type: "string", description: "Doctor ID from knowledge base (optional)" },
           centerName: { type: "string", description: "Gaming center name (optional, for gaming_cafe)" },
           machineType: { type: "string", description: "Machine / console type (optional, for gaming_cafe)" },
-          locationId: { type: "string", description: "Location / branch ID (optional)" }
+          locationId: { type: "string", description: "Location / branch ID (optional)" },
+          branchId: { type: "string", description: "Branch ID for salon bookings (optional)" },
+          branchName: { type: "string", description: "Branch name (e.g. 'Downtown Branch'). Used when branchId is not known." }
         },
         required: ["customerName", "phone", "startTime"]
       }
@@ -72,9 +100,29 @@ const BOOKING_TOOL = {
   }
 };
 
+// Callback/contact request tool for general business type (shows in Requests tab)
+const REQUEST_TOOL = {
+  toolSpec: {
+    name: "create_request",
+    description: "Create a callback or contact request. Use this when the visitor wants to be contacted, leave a message, or request a callback. Do NOT use create_booking for general businesses.",
+    inputSchema: {
+      json: {
+        type: "object",
+        properties: {
+          callerName: { type: "string", description: "Full name of the person requesting contact" },
+          phone: { type: "string", description: "Phone number for callback" },
+          email: { type: "string", description: "Email (optional)" },
+          description: { type: "string", description: "Brief description of what they need (e.g. 'posture correction mobile app', 'want to discuss pricing')" }
+        },
+        required: ["callerName", "phone"]
+      }
+    }
+  }
+};
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function stripThinking(text) {
+function stripThinkingTags(text) {
   // Remove <thinking>...</thinking> blocks (including multiline)
   return text.replace(/<thinking>[\s\S]*?<\/thinking>\s*/gi, "").trim();
 }
@@ -84,7 +132,7 @@ function extractText(response) {
     const content = response?.output?.message?.content || response?.content || [];
     for (const block of content) {
       if (typeof block.text === "string" && block.text.trim()) {
-        return stripThinking(block.text);
+        return stripThinkingTags(block.text);
       }
     }
   } catch (_) {}
@@ -115,7 +163,7 @@ function getAssistantContent(response) {
   }
 }
 
-async function invokeNova({ systemPrompt, messages, useTools }) {
+async function invokeNova({ systemPrompt, messages, useTools, tools }) {
   const body = {
     schemaVersion: "messages-v1",
     system: [{ text: systemPrompt }],
@@ -127,9 +175,9 @@ async function invokeNova({ systemPrompt, messages, useTools }) {
     }
   };
 
-  if (useTools) {
+  if (useTools && tools && tools.length > 0) {
     body.toolConfig = {
-      tools: [BOOKING_TOOL],
+      tools,
       toolChoice: { auto: {} }
     };
   }
@@ -199,17 +247,80 @@ async function createBooking(handle, input, consumerEmail) {
   return item;
 }
 
-function buildSystemPrompt(persona, handle, knowledgeSummary, displayName, useCase) {
+function generateId() {
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+async function createRequest(handle, input, event) {
+  if (!process.env.REQUESTS_TABLE) return null;
+  const requestId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const claims = event?.requestContext?.authorizer?.jwt?.claims || {};
+  let email = String(input.email || "").trim();
+  if (!email && claims.email) email = String(claims.email).trim().toLowerCase();
+  const callerName = input.callerName || input.customerName || "";
+  const phone = String(input.phone || "").trim();
+
+  const item = {
+    handle,
+    requestId,
+    callerName,
+    phone,
+    email,
+    description: input.description || input.notes || "",
+    classification: "unknown",
+    source: "chat",
+    status: "new",
+    createdAt: now,
+    updatedAt: now
+  };
+  await ddb.put({ TableName: process.env.REQUESTS_TABLE, Item: item }).promise();
+
+  if (process.env.CUSTOMERS_TABLE && (phone || email)) {
+    const customerId = phone || email || generateId();
+    try {
+      await ddb.put({
+        TableName: process.env.CUSTOMERS_TABLE,
+        Item: {
+          handle,
+          customerId,
+          name: callerName || undefined,
+          phone: phone || undefined,
+          email: email || undefined,
+          lastSeenAt: now,
+          source: "chat"
+        },
+        ConditionExpression: "attribute_not_exists(customerId)"
+      }).promise();
+    } catch (e) {
+      if (e.name !== "ConditionalCheckFailedException") {
+        console.warn("[createRequest] customer upsert error:", e.message);
+      }
+    }
+  }
+
+  return item;
+}
+
+function buildSystemPrompt(persona, handle, knowledgeSummary, knowledgeBaseCustomText, displayName, useCase) {
   const today = new Date().toISOString().slice(0, 10);
   const useCaseGuidance = USE_CASE_STEPS[useCase] || `Collect the customer's full name and phone number before creating any booking. Read back the details and wait for confirmation, then call create_booking.`;
 
-  const knowledgeBlock = knowledgeSummary && String(knowledgeSummary).trim()
-    ? `\n--- Knowledge base for ${displayName || handle} ---\n${String(knowledgeSummary).trim()}\n---\n`
+  // Combine knowledgeSummary and knowledgeBaseCustomText
+  const kbParts = [];
+  if (knowledgeBaseCustomText && String(knowledgeBaseCustomText).trim()) {
+    kbParts.push(String(knowledgeBaseCustomText).trim());
+  }
+  if (knowledgeSummary && String(knowledgeSummary).trim()) {
+    kbParts.push(String(knowledgeSummary).trim());
+  }
+  const knowledgeBlock = kbParts.length > 0
+    ? `\n--- Knowledge base for ${displayName || handle} ---\n${kbParts.join("\n\n")}\n---\n`
     : "";
 
   return [
-    `You are the Yandle AI assistant for ${displayName || handle}.`,
-    `Persona: ${persona || "Yandle assistant"}.`,
+    `You are the YANDLE AI assistant for ${displayName || handle}.`,
+    `Persona: ${persona || "YANDLE assistant"}.`,
     `Today's date is ${today}.`,
     "",
     "General rules:",
@@ -262,8 +373,9 @@ exports.handler = async (event) => {
 
     const handle = sessionMetaResult.Item.handle || "";
     const consumerEmail = sessionMetaResult.Item.consumerEmail || null;
-    let persona = sessionMetaResult.Item.persona || "Yandle assistant";
+    let persona = sessionMetaResult.Item.persona || "YANDLE assistant";
     let knowledgeSummary = "";
+    let knowledgeBaseCustomText = "";
     let displayName = handle;
     let useCase = "";
 
@@ -276,8 +388,9 @@ exports.handler = async (event) => {
         if (profileResult.Item) {
           if (profileResult.Item.persona) persona = profileResult.Item.persona;
           if (profileResult.Item.knowledgeSummary) knowledgeSummary = profileResult.Item.knowledgeSummary;
+          if (profileResult.Item.knowledgeBaseCustomText) knowledgeBaseCustomText = profileResult.Item.knowledgeBaseCustomText;
           if (profileResult.Item.displayName) displayName = profileResult.Item.displayName;
-          if (profileResult.Item.useCase) useCase = profileResult.Item.useCase;
+          useCase = profileResult.Item.useCaseId || profileResult.Item.useCase || "";
         }
       } catch (e) {
         console.warn("Could not load handle profile:", e.message);
@@ -297,30 +410,64 @@ exports.handler = async (event) => {
 
     const historyItems = (historyResult.Items || []).reverse();
 
-    // Build messages array for Nova (proper alternating user/assistant format)
+    // Build messages array for Nova — enforce strict alternating user/assistant.
+    // History items may be mis-ordered when user+assistant share the same timestamp
+    // (sort-key tie-breaks on random UUID). Fix by enforcing alternation.
     const messages = [];
+    let expectedRole = "user"; // Bedrock requires the first message to be "user"
     for (const item of historyItems) {
-      if (item.role === "user" || item.role === "assistant") {
+      if (item.role !== "user" && item.role !== "assistant") continue;
+      if (item.role === expectedRole) {
         messages.push({
           role: item.role,
           content: [{ text: item.content }]
         });
+        expectedRole = expectedRole === "user" ? "assistant" : "user";
       }
+      // Skip messages that would break alternation
     }
+
+    // If the last history message is "user" (no matching assistant reply),
+    // drop it so we don't have two consecutive user messages when we append.
+    if (messages.length > 0 && messages[messages.length - 1].role === "user") {
+      messages.pop();
+    }
+
     // Add current user message
     messages.push({ role: "user", content: [{ text: message }] });
 
-    const systemPrompt = buildSystemPrompt(persona, handle, knowledgeSummary, displayName, useCase);
+    const systemPrompt = buildSystemPrompt(persona, handle, knowledgeSummary, knowledgeBaseCustomText, displayName, useCase);
+
+    // For general business use create_request (Requests tab); for others use create_booking
+    const tools = useCase === "general" ? [REQUEST_TOOL] : [BOOKING_TOOL];
 
     let agentReply = "";
     let bookingCreated = null;
+    let requestCreated = null;
 
     try {
       // First call — with tools enabled
-      const firstResp = await invokeNova({ systemPrompt, messages, useTools: true });
+      const firstResp = await invokeNova({ systemPrompt, messages, useTools: true, tools });
       const toolUse = extractToolUse(firstResp);
 
-      if (toolUse && toolUse.name === "create_booking" && process.env.BOOKINGS_TABLE) {
+      if (toolUse && toolUse.name === "create_request" && process.env.REQUESTS_TABLE) {
+        try {
+          requestCreated = await createRequest(handle, toolUse.input, event);
+        } catch (reqErr) {
+          console.error("Request creation failed:", reqErr.message);
+        }
+        const assistantContent = getAssistantContent(firstResp);
+        const toolResultContent = requestCreated
+          ? [{ json: { success: true, requestId: requestCreated.requestId, message: "Request saved. We'll be in touch." } }]
+          : [{ json: { success: false, message: "Request could not be saved. Please try again or call us." } }];
+        const messagesWithTool = [
+          ...messages,
+          { role: "assistant", content: assistantContent },
+          { role: "user", content: [{ toolResult: { toolUseId: toolUse.toolUseId, content: toolResultContent } }] }
+        ];
+        const confirmResp = await invokeNova({ systemPrompt, messages: messagesWithTool, useTools: false });
+        agentReply = extractText(confirmResp);
+      } else if (toolUse && toolUse.name === "create_booking" && process.env.BOOKINGS_TABLE) {
         // Create the actual booking
         try {
           bookingCreated = await createBooking(handle, toolUse.input, consumerEmail);
@@ -369,7 +516,7 @@ exports.handler = async (event) => {
         TableName: process.env.CONVERSATIONS_TABLE,
         Item: {
           pk: sessionPk,
-          sk: `MSG#${now}#${userMessageId}`,
+          sk: `MSG#${now}#0#${userMessageId}`,
           handle,
           role: "user",
           content: message,
@@ -378,17 +525,18 @@ exports.handler = async (event) => {
       })
       .promise();
 
-    // Persist assistant reply
+    // Persist assistant reply (sort key #1# ensures it always sorts AFTER user #0#)
+    const agentTs = new Date(new Date(now).getTime() + 1).toISOString();
     await ddb
       .put({
         TableName: process.env.CONVERSATIONS_TABLE,
         Item: {
           pk: sessionPk,
-          sk: `MSG#${now}#${agentMessageId}`,
+          sk: `MSG#${now}#1#${agentMessageId}`,
           handle,
           role: "assistant",
           content: agentReply,
-          createdAt: now
+          createdAt: agentTs
         }
       })
       .promise();

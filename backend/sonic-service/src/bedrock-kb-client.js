@@ -102,6 +102,7 @@ export async function retrieveFromKnowledgeBase(options) {
 
 /**
  * Format retrieval results as a single string for the model to use in its response.
+ * Includes a clear instruction so the model speaks this content to the user.
  * @param {Array<{ content: string, metadata: object, score: number }>} results
  * @returns {string}
  */
@@ -113,5 +114,9 @@ export function formatRetrievalResultsForModel(results) {
     const title = r.metadata?.title ? ` (${r.metadata.title})` : "";
     return `[${i + 1}]${title}\n${r.content}`;
   });
-  return "Retrieved from knowledge base:\n\n" + parts.join("\n\n---\n\n");
+  const body = parts.join("\n\n---\n\n");
+  return (
+    "Use the following information to answer the user. Speak it clearly and directly; state key details like prices, hours, and location. Do not say you 'found information' without then stating what it is.\n\n" +
+    body
+  );
 }

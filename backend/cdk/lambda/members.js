@@ -90,6 +90,24 @@ exports.handler = async (event) => {
         }
       }
 
+      // Also check if this email is the owner of another handle
+      if (process.env.HANDLES_TABLE && process.env.HANDLES_OWNER_EMAIL_INDEX) {
+        const ownerCheck = await ddb.query({
+          TableName: process.env.HANDLES_TABLE,
+          IndexName: process.env.HANDLES_OWNER_EMAIL_INDEX,
+          KeyConditionExpression: "ownerEmail = :e",
+          ExpressionAttributeValues: { ":e": email },
+          Limit: 1
+        }).promise();
+        if (ownerCheck.Items && ownerCheck.Items.length > 0 && ownerCheck.Items[0].handle !== handle) {
+          return {
+            statusCode: 409,
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ error: `This email is the owner of @${ownerCheck.Items[0].handle}. A person can only belong to one business.` })
+          };
+        }
+      }
+
       const item = {
         handle,
         email,

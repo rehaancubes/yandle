@@ -24,9 +24,13 @@ class ProfilePage extends StatefulWidget {
 
 class _ProfilePageState extends State<ProfilePage> {
   String? _email;
+  String? _phone;
+  bool _isPhoneAuth = false;
   List<_Handle> _handles = [];
   bool _loading = true;
   bool _signingOut = false;
+  bool _linkingEmail = false;
+  final _linkEmailCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -34,10 +38,18 @@ class _ProfilePageState extends State<ProfilePage> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _linkEmailCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
       _email = await AuthService.getCurrentUserEmail();
+      _isPhoneAuth = await AuthService.isPhoneAuthUser();
+      _phone = await AuthService.getCurrentUserPhone();
       final token = await AuthService.getIdToken();
       if (token != null) {
         final res = await http.get(
@@ -56,6 +68,31 @@ class _ProfilePageState extends State<ProfilePage> {
       // Email from JWT is always available; handles failure is non-critical
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _linkEmail() async {
+    final email = _linkEmailCtrl.text.trim().toLowerCase();
+    if (email.isEmpty || !email.contains('@')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid email address'), backgroundColor: Colors.redAccent),
+      );
+      return;
+    }
+    setState(() => _linkingEmail = true);
+    final res = await AuthService.linkEmail(email);
+    if (!mounted) return;
+    setState(() => _linkingEmail = false);
+    if (res.ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Email linked successfully!'), backgroundColor: Color(0xFF4F46E5)),
+      );
+      _linkEmailCtrl.clear();
+      _load(); // reload profile to show updated email
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(res.error ?? 'Failed to link email'), backgroundColor: Colors.redAccent),
+      );
     }
   }
 
@@ -119,15 +156,10 @@ class _ProfilePageState extends State<ProfilePage> {
                               ),
                             ),
                             child: Center(
-                              child: Text(
-                                (_email?.isNotEmpty == true
-                                    ? _email![0].toUpperCase()
-                                    : '?'),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 18,
-                                ),
+                              child: Icon(
+                                _isPhoneAuth ? Icons.phone : Icons.person,
+                                color: Colors.white,
+                                size: 20,
                               ),
                             ),
                           ),
@@ -137,26 +169,148 @@ class _ProfilePageState extends State<ProfilePage> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  _email ?? '—',
+                                  _isPhoneAuth
+                                      ? (_phone ?? 'Phone user')
+                                      : (_email ?? '—'),
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontWeight: FontWeight.w600,
                                     fontSize: 14,
                                   ),
                                 ),
-                                const SizedBox(height: 2),
-                                const Text(
-                                  'Yandle account',
-                                  style: TextStyle(
-                                      color: Colors.white54, fontSize: 12),
-                                ),
+                                if (!_isPhoneAuth && _email != null) ...[
+                                  const SizedBox(height: 2),
+                                  const Text(
+                                    'Yandle account',
+                                    style: TextStyle(
+                                        color: Colors.white54, fontSize: 12),
+                                  ),
+                                ],
+                                if (_isPhoneAuth) ...[
+                                  const SizedBox(height: 2),
+                                  const Text(
+                                    'Signed in with phone',
+                                    style: TextStyle(
+                                        color: Colors.white54, fontSize: 12),
+                                  ),
+                                ],
                               ],
                             ),
                           ),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 16),
+
+                    // ── Link email card (phone-auth users only) ──────────
+                    if (_isPhoneAuth) ...[
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0F172A),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: const Color(0xFF4F46E5).withValues(alpha: 0.3),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Row(
+                              children: [
+                                Icon(Icons.email_outlined,
+                                    color: Color(0xFF4F46E5), size: 18),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Link your email',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            const Text(
+                              'Add your email to access businesses you\'re a member of and receive notifications.',
+                              style: TextStyle(
+                                color: Colors.white54,
+                                fontSize: 12,
+                                height: 1.4,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _linkEmailCtrl,
+                              keyboardType: TextInputType.emailAddress,
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 14),
+                              decoration: InputDecoration(
+                                hintText: 'you@example.com',
+                                hintStyle:
+                                    const TextStyle(color: Colors.white38),
+                                filled: true,
+                                fillColor: const Color(0xFF020617),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide(
+                                    color:
+                                        Colors.white.withValues(alpha: 0.12),
+                                  ),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide(
+                                    color:
+                                        Colors.white.withValues(alpha: 0.12),
+                                  ),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: const BorderSide(
+                                      color: Color(0xFF4F46E5)),
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 14, vertical: 12),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 40,
+                              child: ElevatedButton(
+                                onPressed: _linkingEmail ? null : _linkEmail,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF4F46E5),
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  disabledBackgroundColor: const Color(0xFF4F46E5)
+                                      .withValues(alpha: 0.5),
+                                ),
+                                child: _linkingEmail
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : const Text('Link Email',
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 13)),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+                    const SizedBox(height: 8),
 
                     // ── Admin mode toggle ──────────────────────────────────
                     if (_handles.isNotEmpty && widget.onAdminToggle != null) ...[

@@ -1,18 +1,11 @@
 #!/usr/bin/env node
 /**
- * Purge all Voxa data for fresh testing: DynamoDB tables, S3 buckets, and Cognito users.
- * Requires AWS credentials and region (e.g. us-east-1).
+ * Purge all Voxa data for fresh testing: empties DynamoDB tables and S3 buckets
+ * created by the VoxaStack. Requires AWS credentials and region (e.g. us-east-1).
  *
  * Usage: from backend/cdk run: node ../scripts/purge-data.js
- *
- * What gets purged:
- *   - All DynamoDB tables with prefix VoxaStack- (bookings, handles, conversations, etc.)
- *   - Recordings and KB content S3 buckets
- *   - All Cognito users in COGNITO_USER_POOL_ID, except emails in COGNITO_PRESERVE_EMAIL (BMS login).
- *
- * Env: TABLE_PREFIX, BUCKET_RECORDINGS, BUCKET_KB.
- *      COGNITO_USER_POOL_ID (default below) — set to "" to skip Cognito purge.
- *      COGNITO_PRESERVE_EMAIL — comma-separated emails to keep (default: rehaan@mobil80.com).
+ * Optional env: TABLE_PREFIX, BUCKET_RECORDINGS, BUCKET_KB.
+ * To also delete all Cognito users (so sign-up is required again): set COGNITO_USER_POOL_ID (e.g. us-east-1_D05ftfM4y).
  */
 
 const path = require("path");
@@ -22,15 +15,10 @@ const region = process.env.AWS_REGION || process.env.CDK_DEFAULT_REGION || "us-e
 const tablePrefix = process.env.TABLE_PREFIX || "VoxaStack-";
 const recordingsBucket = process.env.BUCKET_RECORDINGS || "voxastack-voxarecordingsbucketbcce1140-0nfpodn0lup5";
 const kbBucket = process.env.BUCKET_KB || "voxastack-voxakbcontentbucket4e4638e8-ajclwvedqmlq";
-const cognitoUserPoolId = process.env.COGNITO_USER_POOL_ID !== undefined && process.env.COGNITO_USER_POOL_ID !== ""
-  ? process.env.COGNITO_USER_POOL_ID
-  : "us-east-1_D05ftfM4y";
-const cognitoPreserveEmail = (process.env.COGNITO_PRESERVE_EMAIL || "rehaan@mobil80.com")
-  .split(",")
-  .map((e) => e.trim().toLowerCase())
-  .filter(Boolean);
+const cognitoUserPoolId = process.env.COGNITO_USER_POOL_ID;
 
 const dynamo = new AWS.DynamoDB({ region });
+const docClient = new AWS.DynamoDB.DocumentClient({ region });
 const s3 = new AWS.S3({ region });
 const cognito = new AWS.CognitoIdentityServiceProvider({ region });
 
@@ -104,42 +92,80 @@ async function emptyBucket(bucketName) {
   return total;
 }
 
-function getEmail(user) {
-  const attrs = user.Attributes || [];
-  const emailAttr = attrs.find((a) => a.Name === "email");
-  return (emailAttr && emailAttr.Value) ? emailAttr.Value.trim().toLowerCase() : "";
-}
-
-async function purgeCognitoUsers(userPoolId, preserveEmails) {
+async function purgeCognitoUsers(userPoolId) {
   let total = 0;
-  let skipped = 0;
   let token;
   do {
-    const out = await cognito.listUsers({
-      UserPoolId: userPoolId,
-      Limit: 60,
-      PaginationToken: token,
-      AttributesToGet: ["email"],
-    }).promise();
+    const out = await cognito.listUsers({ UserPoolId: userPoolId, Limit: 60, PaginationToken: token }).promise();
     for (const u of out.Users || []) {
-      if (!u.Username) continue;
-      const email = getEmail(u);
-      if (preserveEmails.length && email && preserveEmails.includes(email)) {
-        skipped++;
-        continue;
+      if (u.Username) {
+        await cognito.adminDeleteUser({ UserPoolId: userPoolId, Username: u.Username }).promise();
+        total++;
       }
-      await cognito.adminDeleteUser({ UserPoolId: userPoolId, Username: u.Username }).promise();
-      total++;
     }
     token = out.PaginationToken;
   } while (token);
-  if (skipped) console.log("  Cognito (preserved)", skipped, "user(s):", cognitoPreserveEmail.join(", "));
   return total;
+}
+
+/** Find table name that holds phone numbers (DIDs). */
+function findPhoneNumbersTable(tableNames) {
+  return tableNames.find((n) => n.includes("PhoneNumbers") && n.startsWith(tablePrefix)) || null;
+}
+
+/** Backup all items from PhoneNumbersTable (full scan). Returns list of items to restore. */
+async function backupPhoneNumbers(tableName) {
+  const items = [];
+  let lastKey;
+  do {
+    const out = await docClient.scan({
+      TableName: tableName,
+      ExclusiveStartKey: lastKey,
+    }).promise();
+    items.push(...(out.Items || []));
+    lastKey = out.LastEvaluatedKey;
+  } while (lastKey);
+  return items;
+}
+
+/** Re-insert phone number rows as available DIDs (same phoneNumber, status available). */
+async function restorePhoneNumbers(tableName, items) {
+  if (items.length === 0) return 0;
+  const now = new Date().toISOString();
+  let restored = 0;
+  for (const item of items) {
+    const phoneNumber = item.phoneNumber;
+    if (!phoneNumber) continue;
+    const putItem = {
+      phoneNumber,
+      status: "available",
+      updatedAt: now,
+    };
+    if (item.monthlyPrice != null) putItem.monthlyPrice = item.monthlyPrice;
+    if (item.createdAt) putItem.createdAt = item.createdAt;
+    else putItem.createdAt = now;
+    await docClient.put({
+      TableName: tableName,
+      Item: putItem,
+    }).promise();
+    restored++;
+  }
+  return restored;
 }
 
 async function main() {
   console.log("Purging Voxa data (tables + S3" + (cognitoUserPoolId ? " + Cognito users" : "") + ")...\n");
   const tables = await listTables();
+  const phoneNumbersTable = findPhoneNumbersTable(tables);
+  let savedPhoneItems = [];
+  if (phoneNumbersTable) {
+    try {
+      savedPhoneItems = await backupPhoneNumbers(phoneNumbersTable);
+      console.log("  Backed up", savedPhoneItems.length, "phone number(s) from", phoneNumbersTable);
+    } catch (e) {
+      console.error("  Backup phone numbers error:", e.message);
+    }
+  }
   if (tables.length === 0) {
     console.log("No DynamoDB tables found with prefix:", tablePrefix);
   } else {
@@ -150,6 +176,14 @@ async function main() {
       } catch (e) {
         console.error("  Table", table, "error:", e.message);
       }
+    }
+  }
+  if (phoneNumbersTable && savedPhoneItems.length > 0) {
+    try {
+      const n = await restorePhoneNumbers(phoneNumbersTable, savedPhoneItems);
+      console.log("  Restored", n, "phone number(s) to", phoneNumbersTable, "(status: available)");
+    } catch (e) {
+      console.error("  Restore phone numbers error:", e.message);
     }
   }
   for (const bucket of [recordingsBucket, kbBucket]) {
@@ -163,7 +197,7 @@ async function main() {
   }
   if (cognitoUserPoolId) {
     try {
-      const n = await purgeCognitoUsers(cognitoUserPoolId, cognitoPreserveEmail);
+      const n = await purgeCognitoUsers(cognitoUserPoolId);
       console.log("  Cognito User Pool", cognitoUserPoolId, "→", n, "users deleted");
     } catch (e) {
       console.error("  Cognito", cognitoUserPoolId, "error:", e.message);
