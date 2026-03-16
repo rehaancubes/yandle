@@ -19,7 +19,7 @@ import { businessCases, type UseCase } from "@/lib/onboarding-data";
 import { getCurrentUserSub, getOnboardingStorageKey } from "@/lib/auth";
 
 const apiBase = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
-const GOOGLE_PLACES_KEY = "REDACTED";
+const GOOGLE_PLACES_KEY = import.meta.env.VITE_GOOGLE_PLACES_API_KEY || "";
 
 function uid() {
   return (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now() + Math.random());

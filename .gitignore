@@ -17,6 +17,7 @@ node_modules/
 # Firebase / mobile secrets (use your own; see voxa_mobile/README)
 voxa_mobile/android/app/google-services.json
 voxa_mobile/ios/Runner/GoogleService-Info.plist
+voxa_mobile/firebase.json
 
 # IDE / misc
 .claude/
