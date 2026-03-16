@@ -2,6 +2,8 @@
 
 > **"I built Voxa because I was drowning in phone calls at my gaming cafe."**
 
+**License:** [MIT](LICENSE) — use, modify, and distribute with attribution.
+
 [![Built with Amazon Nova](https://img.shields.io/badge/Built%20with-Amazon%20Nova-orange)](#amazon-nova-integration)
 [![Voice AI](https://img.shields.io/badge/Voice%20AI-Nova%20Sonic-blue)](#voice-agent)
 [![Agentic AI](https://img.shields.io/badge/Agentic%20AI-Tool%20Use-green)](#agentic-tool-use)
@@ -269,38 +271,191 @@ Dashboard shows today's bookings, recent conversations with full transcripts and
 
 ---
 
-## Quick Start
+## How to Use & Build
 
-### Backend (AWS CDK)
+This section explains how to run and build each part of Voxa locally or for production.
+
+### Prerequisites
+
+- **Node.js** 20.x (for backend CDK, web app, Sonic service)
+- **npm** (comes with Node)
+- **Flutter** 3.x (for mobile app; [install](https://docs.flutter.dev/get-started/install))
+- **AWS CLI** configured (for backend deploy)
+- **Docker** (for Sonic voice service image)
+- **Firebase** project (for mobile auth; optional if you skip phone sign-in)
+
+---
+
+### 1. Backend (AWS CDK + Lambdas)
+
+The backend is defined as AWS CDK (TypeScript). Deploy API Gateway, Lambdas, DynamoDB, Cognito, and related resources.
+
+**Install and deploy:**
+
 ```bash
 cd backend/cdk
 npm install
 npm run build
+npm run deploy
+```
+
+For the first deploy you may need to pass the Sonic service ECR image URI if you’ve already built it:
+
+```bash
 npm run deploy -- --parameters SonicContainerImageUri=<ECR_IMAGE_URI>
 ```
 
-### Web (React + Vite)
+After deploy, note the API base URL and Cognito User Pool / App Client ID; you’ll use them in the web and mobile apps.
+
+**Config:** Set any CDK context or environment variables your stack expects (see `backend/cdk/` for parameters).
+
+---
+
+### 2. Sonic Voice Service (Docker)
+
+The real-time voice agent runs as a container (e.g. on ECS Fargate). Build and run locally for development:
+
+**Build:**
+
+```bash
+cd backend/sonic-service
+npm install
+docker build -t voxa-sonic-service .
+```
+
+**Run locally:**
+
+```bash
+npm run dev
+# or
+node src/server.js
+```
+
+For production, push the image to ECR and deploy via CDK (the stack references this image for ECS).
+
+---
+
+### 3. Web App (Dashboard + Shareable Link)
+
+The React app in `web/` is the business dashboard (onboarding, bookings, knowledge base, website builder, etc.) and also serves the **shareable booking page** (public link where customers talk to the AI or book).
+
+**Install:**
+
 ```bash
 cd web
 npm install
+```
+
+**Configure:** Copy the example env and set your API and Cognito values (from backend deploy):
+
+```bash
 cp .env.example .env.local
-# Set VITE_API_BASE_URL, VITE_COGNITO_CLIENT_ID, etc.
+```
+
+Edit `.env.local` and set at least:
+
+- `VITE_API_BASE_URL` — your API Gateway base URL (e.g. `https://xxxx.execute-api.us-east-1.amazonaws.com`)
+- `VITE_COGNITO_DOMAIN` — Cognito domain (e.g. `https://your-domain.auth.us-east-1.amazoncognito.com`)
+- `VITE_COGNITO_CLIENT_ID` — Cognito app client ID
+- `VITE_COGNITO_REDIRECT_URI` — e.g. `http://localhost:8080/auth/callback` for local dev
+- `VITE_COGNITO_LOGOUT_URI` — e.g. `http://localhost:8080/`
+
+**Run (development):**
+
+```bash
 npm run dev
 ```
 
-### Mobile (Flutter)
+**Build (production):**
+
+```bash
+npm run build
+```
+
+Output is in `dist/`. You can serve it with any static host (e.g. Vercel: `npm run deploy` / `npm run deploy:prod`).
+
+---
+
+### 4. Mobile App (Flutter)
+
+The Flutter app in `voxa_mobile/` is for **customers** (discover businesses, my bookings, voice calls) and **business owners** (admin profile, token queue, etc.).
+
+**Install dependencies:**
+
 ```bash
 cd voxa_mobile
 flutter pub get
+```
+
+**Configure API and Cognito:**  
+Edit `voxa_mobile/lib/api_config.dart` and set:
+
+- `apiBase` — same as `VITE_API_BASE_URL` (your API Gateway URL)
+- `cognitoClientId` — same as Cognito app client ID
+- `cognitoRegion` and `cognitoEndpoint` — your Cognito region and IdP endpoint
+
+**Configure Firebase (for phone auth):**  
+If you use phone sign-in, add your Firebase config:
+
+1. Run FlutterFire CLI from the app directory:  
+   `dart run flutterfire configure`  
+   This creates/updates `lib/firebase_options.dart` and expects `android/app/google-services.json` and `ios/Runner/GoogleService-Info.plist` (add these from Firebase Console; they are gitignored).
+
+2. Or manually copy `google-services.json` (Android) and `GoogleService-Info.plist` (iOS) from your Firebase project into the paths above and ensure `firebase_options.dart` matches.
+
+**Run (development):**
+
+```bash
 flutter run
 ```
 
-### Sonic Service (Docker)
+**Build (release):**
+
+- Android:  
+  `flutter build apk --release`  
+  or  
+  `flutter build appbundle --release`
+- iOS:  
+  `flutter build ios --release`  
+  (then open Xcode to archive and distribute)
+
+---
+
+### 5. Gaming Cafe Website (optional)
+
+The `gamingcafewebsite/` folder is a separate Vite + React site (e.g. for a single gaming cafe). It is independent of the main Voxa web app.
+
+**Install and run:**
+
 ```bash
-cd backend/sonic-service
-docker build -t voxa-sonic-service .
-# Push to ECR, deploy via CDK
+cd gamingcafewebsite
+npm install
+npm run dev
 ```
+
+**Build:**
+
+```bash
+npm run build
+```
+
+---
+
+### 6. SIP Trunk (optional)
+
+The `Sip trunk/` folder contains the bridge (e.g. Asterisk/transcriber) that routes phone calls to the Sonic service. Use it if you connect a real SIP trunk to Voxa. Setup is environment-specific (Asterisk config, Socket.IO URL to Sonic, etc.); see that folder for scripts and config.
+
+---
+
+## Quick reference
+
+| Part              | Directory            | Dev command           | Build / deploy              |
+|-------------------|----------------------|------------------------|-----------------------------|
+| Backend           | `backend/cdk`        | —                      | `npm run deploy`            |
+| Sonic voice       | `backend/sonic-service` | `npm run dev`       | `docker build` → ECR + CDK  |
+| Web (dashboard)   | `web`                | `npm run dev`          | `npm run build`             |
+| Mobile            | `voxa_mobile`        | `flutter run`          | `flutter build apk/ios`     |
+| Gaming cafe site  | `gamingcafewebsite`  | `npm run dev`          | `npm run build`             |
 
 ---
 
