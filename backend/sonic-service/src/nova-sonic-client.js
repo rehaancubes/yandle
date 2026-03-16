@@ -406,59 +406,65 @@ export class NovaSonicBidirectionalStreamClient {
     const session = this.sessions.get(sessionId);
     if (!session) return;
 
-    const tools = [
-      {
-        toolSpec: {
-          name: "createBooking",
-          description:
-            "Create and persist a confirmed booking for a caller, including center, machine type, date/time, duration, name, and phone number.",
-          inputSchema: {
-            json: JSON.stringify(CREATE_BOOKING_SCHEMA),
+    // Sales calls have no tools — they are purely conversational
+    const isSalesCall = session.context?.callType === "sales";
+    const tools = [];
+
+    if (!isSalesCall) {
+      tools.push(
+        {
+          toolSpec: {
+            name: "createBooking",
+            description:
+              "Create and persist a confirmed booking for a caller, including center, machine type, date/time, duration, name, and phone number.",
+            inputSchema: {
+              json: JSON.stringify(CREATE_BOOKING_SCHEMA),
+            },
           },
         },
-      },
-      {
-        toolSpec: {
-          name: "getBookingsForTimeRange",
-          description:
-            "Check existing bookings for a center and machine type within a specific time range to determine availability and potential conflicts.",
-          inputSchema: {
-            json: JSON.stringify(GET_BOOKINGS_FOR_TIME_RANGE_SCHEMA),
+        {
+          toolSpec: {
+            name: "getBookingsForTimeRange",
+            description:
+              "Check existing bookings for a center and machine type within a specific time range to determine availability and potential conflicts.",
+            inputSchema: {
+              json: JSON.stringify(GET_BOOKINGS_FOR_TIME_RANGE_SCHEMA),
+            },
           },
         },
-      },
-    ];
+      );
 
-    // Add catalog lookup tool for retail businesses
-    tools.push({
-      toolSpec: {
-        name: "lookupCatalogItems",
-        description: "Look up products in the business catalog. Use when customer asks about available products, stock, prices, or specific items.",
-        inputSchema: { json: JSON.stringify(LOOKUP_CATALOG_ITEMS_SCHEMA) }
-      }
-    });
-
-    // Add clinic token tool for clinic businesses
-    tools.push({
-      toolSpec: {
-        name: "createClinicToken",
-        description: "Issue a queue token to a patient for a clinic visit. Use when a patient calls to get a token/queue number for a doctor.",
-        inputSchema: { json: JSON.stringify(CREATE_CLINIC_TOKEN_SCHEMA) }
-      }
-    });
-
-    // Add Bedrock Knowledge Base tool when a knowledge base is configured (per session or env)
-    if (session.context?.knowledgeBaseId) {
+      // Add catalog lookup tool for retail businesses
       tools.push({
         toolSpec: {
-          name: "queryKnowledgeBase",
-          description:
-            "Search the business knowledge base for policies, FAQs, service details, pricing, or other information. Use this when the user asks about company-specific information that may be in the knowledge base.",
-          inputSchema: {
-            json: JSON.stringify(KNOWLEDGE_BASE_TOOL_SCHEMA),
-          },
-        },
+          name: "lookupCatalogItems",
+          description: "Look up products in the business catalog. Use when customer asks about available products, stock, prices, or specific items.",
+          inputSchema: { json: JSON.stringify(LOOKUP_CATALOG_ITEMS_SCHEMA) }
+        }
       });
+
+      // Add clinic token tool for clinic businesses
+      tools.push({
+        toolSpec: {
+          name: "createClinicToken",
+          description: "Issue a queue token to a patient for a clinic visit. Use when a patient calls to get a token/queue number for a doctor.",
+          inputSchema: { json: JSON.stringify(CREATE_CLINIC_TOKEN_SCHEMA) }
+        }
+      });
+
+      // Add Bedrock Knowledge Base tool when a knowledge base is configured (per session or env)
+      if (session.context?.knowledgeBaseId) {
+        tools.push({
+          toolSpec: {
+            name: "queryKnowledgeBase",
+            description:
+              "Search the business knowledge base for policies, FAQs, service details, pricing, or other information. Use this when the user asks about company-specific information that may be in the knowledge base.",
+            inputSchema: {
+              json: JSON.stringify(KNOWLEDGE_BASE_TOOL_SCHEMA),
+            },
+          },
+        });
+      }
     }
 
     const event = {
@@ -476,9 +482,7 @@ export class NovaSonicBidirectionalStreamClient {
             voiceId: voiceId || "tiffany",
           },
           toolUseOutputConfiguration: { mediaType: "application/json" },
-          toolConfiguration: {
-            tools,
-          },
+          ...(tools.length > 0 ? { toolConfiguration: { tools } } : {}),
         },
       },
     };

@@ -16,9 +16,22 @@ import {
   MessageSquare,
   CheckCircle2,
   XCircle,
+  Bot,
+  PhoneOutgoing,
+  Play,
+  Pause,
+  Square,
+  Flame,
+  Thermometer,
+  Snowflake,
+  Ban,
+  MapPin,
+  Globe,
+  Star,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import AuthButton from "@/components/auth/AuthButton";
 
 /* ------------------------------------------------------------------ */
@@ -87,6 +100,49 @@ interface CreditRecord {
   updatedAt: string;
 }
 
+interface SalesLead {
+  leadId: string;
+  campaignId: string;
+  businessName: string;
+  phoneNumber: string;
+  address: string;
+  googlePlaceId: string;
+  rating: number | null;
+  website: string | null;
+  status: "pending" | "calling" | "completed" | "failed" | "skipped";
+  classification: "hot" | "warm" | "cold" | "not_interested" | null;
+  callSummary: string | null;
+  callDurationSeconds: number | null;
+  createdAt: string;
+}
+
+interface SalesCampaign {
+  campaignId: string;
+  name: string;
+  businessType: string;
+  location: string;
+  status: "draft" | "running" | "paused" | "completed" | "stopped";
+  totalLeads: number;
+  completedCalls: number;
+  hotLeads: number;
+  warmLeads: number;
+  coldLeads: number;
+  notInterested: number;
+  failedCalls: number;
+  createdAt: string;
+}
+
+interface PlacesResult {
+  name: string;
+  phone: string;
+  address: string;
+  placeId: string;
+  rating: number | null;
+  ratingCount: number;
+  website: string | null;
+  types: string[];
+}
+
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
@@ -101,6 +157,7 @@ const useCaseLabels: Record<string, string> = {
 
 const bmsNavItems = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
+  { id: "salesbot", label: "Salesbot", icon: Bot },
   { id: "phone-numbers", label: "Phone Numbers", icon: Phone },
   { id: "payments", label: "Payments", icon: CreditCard },
   { id: "businesses", label: "Businesses", icon: Building2 },
@@ -168,6 +225,23 @@ export default function BMS() {
   // Tab loading
   const [tabLoading, setTabLoading] = useState(false);
 
+  // Salesbot state
+  const [campaigns, setCampaigns] = useState<SalesCampaign[]>([]);
+  const [campaignsLoaded, setCampaignsLoaded] = useState(false);
+  const [activeCampaign, setActiveCampaign] = useState<SalesCampaign | null>(null);
+  const [activeCampaignLeads, setActiveCampaignLeads] = useState<SalesLead[]>([]);
+  const [searchedLeads, setSearchedLeads] = useState<PlacesResult[]>([]);
+  const [selectedLeadIdxs, setSelectedLeadIdxs] = useState<Set<number>>(new Set());
+  const [leadSearchType, setLeadSearchType] = useState("salon");
+  const [leadSearchLocation, setLeadSearchLocation] = useState("");
+  const [leadSearching, setLeadSearching] = useState(false);
+  const [testCallPhone, setTestCallPhone] = useState("");
+  const [testCallStatus, setTestCallStatus] = useState<"idle" | "calling" | "completed">("idle");
+  const [testCallResult, setTestCallResult] = useState<{ summary: string; classification: string; duration: number } | null>(null);
+  const [testCallPollId, setTestCallPollId] = useState<string | null>(null);
+  const [campaignPolling, setCampaignPolling] = useState(false);
+  const [creatingCampaign, setCreatingCampaign] = useState(false);
+
   // Search
   const [phoneSearch, setPhoneSearch] = useState("");
   const [paymentSearch, setPaymentSearch] = useState("");
@@ -232,7 +306,164 @@ export default function BMS() {
         .catch(() => {})
         .finally(() => setTabLoading(false));
     }
-  }, [activeNav, accessDenied, loading, numbersLoaded, paymentsLoaded, businessesLoaded, creditsLoaded]);
+    if (activeNav === "salesbot" && !campaignsLoaded) {
+      setTabLoading(true);
+      fetch(`${apiBase}/bms/salesbot/campaigns`, { headers })
+        .then((r) => r.json())
+        .then((d) => { setCampaigns(d.campaigns || []); setCampaignsLoaded(true); })
+        .catch(() => {})
+        .finally(() => setTabLoading(false));
+    }
+  }, [activeNav, accessDenied, loading, numbersLoaded, paymentsLoaded, businessesLoaded, creditsLoaded, campaignsLoaded]);
+
+  // Salesbot — poll active campaign every 5s
+  useEffect(() => {
+    if (!activeCampaign || !["running"].includes(activeCampaign.status)) return;
+    setCampaignPolling(true);
+    const interval = setInterval(async () => {
+      try {
+        const apiBase = getApiBase();
+        const headers = getHeaders();
+        const res = await fetch(`${apiBase}/bms/salesbot/campaigns/${activeCampaign.campaignId}`, { headers });
+        const data = await res.json();
+        if (data.campaign) {
+          setActiveCampaign(data.campaign);
+          setActiveCampaignLeads(data.leads || []);
+          // Update in campaigns list too
+          setCampaigns((prev) => prev.map((c) => c.campaignId === data.campaign.campaignId ? data.campaign : c));
+          if (data.campaign.status !== "running") setCampaignPolling(false);
+        }
+      } catch {}
+    }, 5000);
+    return () => { clearInterval(interval); setCampaignPolling(false); };
+  }, [activeCampaign?.campaignId, activeCampaign?.status]);
+
+  // Salesbot — poll test call result
+  useEffect(() => {
+    if (!testCallPollId || testCallStatus !== "calling") return;
+    const interval = setInterval(async () => {
+      try {
+        const apiBase = getApiBase();
+        const headers = getHeaders();
+        const res = await fetch(`${apiBase}/bms/salesbot/campaigns/${testCallPollId}`, { headers });
+        const data = await res.json();
+        const leads: SalesLead[] = data.leads || [];
+        const lead = leads[0];
+        if (lead && lead.status === "completed") {
+          setTestCallResult({ summary: lead.callSummary || "", classification: lead.classification || "cold", duration: lead.callDurationSeconds || 0 });
+          setTestCallStatus("completed");
+          clearInterval(interval);
+        }
+      } catch {}
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [testCallPollId, testCallStatus]);
+
+  // Salesbot functions
+  async function searchLeads() {
+    if (!leadSearchLocation.trim()) return;
+    setLeadSearching(true);
+    setSearchedLeads([]);
+    setSelectedLeadIdxs(new Set());
+    try {
+      const res = await fetch(`${getApiBase()}/bms/salesbot/leads?type=${encodeURIComponent(leadSearchType)}&location=${encodeURIComponent(leadSearchLocation)}`, { headers: getHeaders() });
+      const data = await res.json();
+      setSearchedLeads(data.businesses || []);
+      // Select all by default
+      setSelectedLeadIdxs(new Set((data.businesses || []).map((_: PlacesResult, i: number) => i)));
+    } catch {}
+    setLeadSearching(false);
+  }
+
+  async function createCampaign() {
+    if (selectedLeadIdxs.size === 0) return;
+    setCreatingCampaign(true);
+    try {
+      const apiBase = getApiBase();
+      const headers = { ...getHeaders(), "content-type": "application/json" };
+      // Create campaign
+      const campRes = await fetch(`${apiBase}/bms/salesbot/campaigns`, {
+        method: "POST", headers,
+        body: JSON.stringify({ name: `${leadSearchType} in ${leadSearchLocation}`, businessType: leadSearchType, location: leadSearchLocation }),
+      });
+      const campaign: SalesCampaign = await campRes.json();
+      // Save leads
+      const leads = Array.from(selectedLeadIdxs).map((i) => searchedLeads[i]);
+      await fetch(`${apiBase}/bms/salesbot/leads/save`, {
+        method: "POST", headers,
+        body: JSON.stringify({ campaignId: campaign.campaignId, leads }),
+      });
+      // Refresh
+      campaign.totalLeads = leads.length;
+      setCampaigns((prev) => [campaign, ...prev]);
+      setActiveCampaign(campaign);
+      // Load leads
+      const detailRes = await fetch(`${apiBase}/bms/salesbot/campaigns/${campaign.campaignId}`, { headers: getHeaders() });
+      const detail = await detailRes.json();
+      setActiveCampaignLeads(detail.leads || []);
+      setSearchedLeads([]);
+    } catch {}
+    setCreatingCampaign(false);
+  }
+
+  async function updateCampaignStatus(status: string) {
+    if (!activeCampaign) return;
+    const headers = { ...getHeaders(), "content-type": "application/json" };
+    await fetch(`${getApiBase()}/bms/salesbot/campaigns/${activeCampaign.campaignId}`, {
+      method: "PATCH", headers, body: JSON.stringify({ status }),
+    });
+    setActiveCampaign({ ...activeCampaign, status: status as SalesCampaign["status"] });
+    setCampaigns((prev) => prev.map((c) => c.campaignId === activeCampaign.campaignId ? { ...c, status: status as SalesCampaign["status"] } : c));
+    // If starting, trigger first batch
+    if (status === "running") {
+      await fetch(`${getApiBase()}/bms/salesbot/call-next`, {
+        method: "POST", headers, body: JSON.stringify({ campaignId: activeCampaign.campaignId }),
+      });
+    }
+  }
+
+  async function startTestCall() {
+    if (!testCallPhone.trim()) return;
+    setTestCallStatus("calling");
+    setTestCallResult(null);
+    try {
+      const res = await fetch(`${getApiBase()}/bms/salesbot/test-call`, {
+        method: "POST", headers: { ...getHeaders(), "content-type": "application/json" },
+        body: JSON.stringify({ phoneNumber: testCallPhone }),
+      });
+      const data = await res.json();
+      setTestCallPollId(data.campaignId || null);
+    } catch {
+      setTestCallStatus("idle");
+    }
+  }
+
+  async function loadCampaignDetail(campaign: SalesCampaign) {
+    setActiveCampaign(campaign);
+    try {
+      const res = await fetch(`${getApiBase()}/bms/salesbot/campaigns/${campaign.campaignId}`, { headers: getHeaders() });
+      const data = await res.json();
+      setActiveCampaignLeads(data.leads || []);
+      if (data.campaign) setActiveCampaign(data.campaign);
+    } catch {}
+  }
+
+  function classificationBadge(cls: string | null) {
+    if (!cls) return <span className="text-xs text-muted-foreground">—</span>;
+    const config: Record<string, { icon: typeof Flame; cls: string; label: string }> = {
+      hot: { icon: Flame, cls: "bg-red-500/20 text-red-400", label: "Hot" },
+      warm: { icon: Thermometer, cls: "bg-orange-500/20 text-orange-400", label: "Warm" },
+      cold: { icon: Snowflake, cls: "bg-blue-500/20 text-blue-400", label: "Cold" },
+      not_interested: { icon: Ban, cls: "bg-zinc-500/20 text-zinc-400", label: "Not Interested" },
+    };
+    const c = config[cls] || config.cold;
+    const Icon = c.icon;
+    return (
+      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${c.cls}`}>
+        <Icon className="h-3 w-3" /> {c.label}
+      </span>
+    );
+  }
 
   /* ---------------------------------------------------------------- */
   /*  Loading state                                                    */
@@ -626,6 +857,320 @@ export default function BMS() {
                       </div>
                     </CardContent>
                   </Card>
+                </>
+              )}
+            </motion.div>
+          )}
+          {/* ==================== Salesbot ==================== */}
+          {activeNav === "salesbot" && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} className="space-y-6">
+              {tabLoading && !campaignsLoaded ? <TabLoader /> : (
+                <>
+                  {/* --- Test Call Section --- */}
+                  <Card className="bg-card/50 border-border">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <PhoneOutgoing className="h-4 w-4" /> Test Call
+                      </CardTitle>
+                      <CardDescription>Enter a phone number to test the AI sales pitch. The AI will call, pitch Voxa, and classify the lead.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex gap-3">
+                        <Input
+                          value={testCallPhone}
+                          onChange={(e) => setTestCallPhone(e.target.value)}
+                          placeholder="+91 98765 43210"
+                          className="max-w-xs bg-background"
+                          disabled={testCallStatus === "calling"}
+                        />
+                        <Button
+                          onClick={startTestCall}
+                          disabled={testCallStatus === "calling" || !testCallPhone.trim()}
+                          className="bg-indigo-600 hover:bg-indigo-700"
+                        >
+                          {testCallStatus === "calling" ? (
+                            <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Calling...</>
+                          ) : (
+                            <><Phone className="h-4 w-4 mr-2" /> Call</>
+                          )}
+                        </Button>
+                        {testCallStatus === "completed" && (
+                          <Button variant="outline" size="sm" onClick={() => { setTestCallStatus("idle"); setTestCallResult(null); setTestCallPollId(null); }}>
+                            Reset
+                          </Button>
+                        )}
+                      </div>
+                      {testCallStatus === "calling" && (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span>AI is calling {testCallPhone}... Waiting for call to complete.</span>
+                        </div>
+                      )}
+                      {testCallResult && (
+                        <div className="rounded-lg border border-border bg-background p-4 space-y-2">
+                          <div className="flex items-center gap-3">
+                            {classificationBadge(testCallResult.classification)}
+                            <span className="text-xs text-muted-foreground">{testCallResult.duration}s</span>
+                          </div>
+                          <p className="text-sm">{testCallResult.summary}</p>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  {/* --- Lead Finder --- */}
+                  <Card className="bg-card/50 border-border">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <MapPin className="h-4 w-4" /> Find Leads
+                      </CardTitle>
+                      <CardDescription>Search for businesses by type and location using Google Places. Select leads to create a campaign.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex gap-3 flex-wrap">
+                        <select
+                          value={leadSearchType}
+                          onChange={(e) => setLeadSearchType(e.target.value)}
+                          className="h-9 rounded-md border border-border bg-background px-3 text-sm"
+                        >
+                          <option value="salon">Salon</option>
+                          <option value="clinic">Clinic</option>
+                          <option value="gaming_cafe">Gaming Cafe</option>
+                          <option value="retail_shop">Retail Shop</option>
+                          <option value="restaurant">Restaurant</option>
+                          <option value="gym">Gym</option>
+                          <option value="spa">Spa</option>
+                          <option value="dental_clinic">Dental Clinic</option>
+                        </select>
+                        <Input
+                          value={leadSearchLocation}
+                          onChange={(e) => setLeadSearchLocation(e.target.value)}
+                          placeholder="e.g. Bangalore, Koramangala"
+                          className="max-w-xs bg-background"
+                        />
+                        <Button onClick={searchLeads} disabled={leadSearching || !leadSearchLocation.trim()}>
+                          {leadSearching ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Search className="h-4 w-4 mr-2" />}
+                          Find Leads
+                        </Button>
+                      </div>
+
+                      {searchedLeads.length > 0 && (
+                        <>
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm text-muted-foreground">{searchedLeads.length} businesses found · {selectedLeadIdxs.size} selected</p>
+                            <div className="flex gap-2">
+                              <Button variant="ghost" size="sm" onClick={() => setSelectedLeadIdxs(new Set(searchedLeads.map((_, i) => i)))}>Select All</Button>
+                              <Button variant="ghost" size="sm" onClick={() => setSelectedLeadIdxs(new Set())}>Deselect All</Button>
+                            </div>
+                          </div>
+                          <div className="overflow-x-auto rounded-lg border border-border">
+                            <table className="w-full text-sm">
+                              <thead><tr className="border-b border-border bg-muted/30">
+                                <th className="py-2 px-3 text-left w-8">
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedLeadIdxs.size === searchedLeads.length}
+                                    onChange={(e) => setSelectedLeadIdxs(e.target.checked ? new Set(searchedLeads.map((_, i) => i)) : new Set())}
+                                    className="rounded"
+                                  />
+                                </th>
+                                <th className="py-2 px-3 text-left font-medium text-muted-foreground">Business</th>
+                                <th className="py-2 px-3 text-left font-medium text-muted-foreground">Phone</th>
+                                <th className="py-2 px-3 text-left font-medium text-muted-foreground">Address</th>
+                                <th className="py-2 px-3 text-left font-medium text-muted-foreground">Rating</th>
+                                <th className="py-2 px-3 text-left font-medium text-muted-foreground">Website</th>
+                              </tr></thead>
+                              <tbody>
+                                {searchedLeads.map((lead, idx) => (
+                                  <tr key={idx} className="border-b border-border/50 hover:bg-secondary/20 transition-colors">
+                                    <td className="py-2 px-3">
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedLeadIdxs.has(idx)}
+                                        onChange={(e) => {
+                                          const next = new Set(selectedLeadIdxs);
+                                          e.target.checked ? next.add(idx) : next.delete(idx);
+                                          setSelectedLeadIdxs(next);
+                                        }}
+                                        className="rounded"
+                                      />
+                                    </td>
+                                    <td className="py-2 px-3 font-medium">{lead.name}</td>
+                                    <td className="py-2 px-3 font-mono text-xs">{lead.phone}</td>
+                                    <td className="py-2 px-3 text-xs text-muted-foreground max-w-[200px] truncate">{lead.address}</td>
+                                    <td className="py-2 px-3">
+                                      {lead.rating ? (
+                                        <span className="inline-flex items-center gap-1 text-xs">
+                                          <Star className="h-3 w-3 text-yellow-400 fill-yellow-400" /> {lead.rating} <span className="text-muted-foreground">({lead.ratingCount})</span>
+                                        </span>
+                                      ) : "—"}
+                                    </td>
+                                    <td className="py-2 px-3">
+                                      {lead.website ? (
+                                        <a href={lead.website} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline inline-flex items-center gap-1 text-xs">
+                                          <Globe className="h-3 w-3" /> Visit
+                                        </a>
+                                      ) : <span className="text-xs text-muted-foreground">None</span>}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          <Button onClick={createCampaign} disabled={selectedLeadIdxs.size === 0 || creatingCampaign} className="bg-emerald-600 hover:bg-emerald-700">
+                            {creatingCampaign ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Bot className="h-4 w-4 mr-2" />}
+                            Create Campaign ({selectedLeadIdxs.size} leads)
+                          </Button>
+                        </>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  {/* --- Campaign List --- */}
+                  {campaigns.length > 0 && !activeCampaign && (
+                    <Card className="bg-card/50 border-border">
+                      <CardHeader>
+                        <CardTitle className="text-base">Campaigns</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-2">
+                          {campaigns.map((c) => (
+                            <button
+                              key={c.campaignId}
+                              onClick={() => loadCampaignDetail(c)}
+                              className="w-full flex items-center justify-between p-3 rounded-lg border border-border hover:bg-secondary/20 transition-colors text-left"
+                            >
+                              <div>
+                                <p className="font-medium text-sm">{c.name}</p>
+                                <p className="text-xs text-muted-foreground">{c.totalLeads} leads · {c.completedCalls} completed · {new Date(c.createdAt).toLocaleDateString()}</p>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <div className="flex gap-1">
+                                  {c.hotLeads > 0 && <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] bg-red-500/20 text-red-400"><Flame className="h-2.5 w-2.5" />{c.hotLeads}</span>}
+                                  {c.warmLeads > 0 && <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] bg-orange-500/20 text-orange-400"><Thermometer className="h-2.5 w-2.5" />{c.warmLeads}</span>}
+                                </div>
+                                {statusBadge(c.status)}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* --- Active Campaign Detail --- */}
+                  {activeCampaign && (
+                    <>
+                      <Card className="bg-card/50 border-border">
+                        <CardHeader>
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <CardTitle className="text-base flex items-center gap-2">
+                                {activeCampaign.name}
+                                {statusBadge(activeCampaign.status)}
+                                {campaignPolling && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+                              </CardTitle>
+                              <CardDescription>{activeCampaign.totalLeads} leads · {activeCampaign.businessType} in {activeCampaign.location}</CardDescription>
+                            </div>
+                            <Button variant="ghost" size="sm" onClick={() => { setActiveCampaign(null); setActiveCampaignLeads([]); }}>
+                              ← Back
+                            </Button>
+                          </div>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                          {/* Progress bar */}
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-xs text-muted-foreground">
+                              <span>{activeCampaign.completedCalls} / {activeCampaign.totalLeads} calls completed</span>
+                              <span>{activeCampaign.totalLeads > 0 ? Math.round((activeCampaign.completedCalls / activeCampaign.totalLeads) * 100) : 0}%</span>
+                            </div>
+                            <div className="h-2 rounded-full bg-secondary overflow-hidden">
+                              <div
+                                className="h-full bg-indigo-500 rounded-full transition-all duration-500"
+                                style={{ width: `${activeCampaign.totalLeads > 0 ? (activeCampaign.completedCalls / activeCampaign.totalLeads) * 100 : 0}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          {/* Stats row */}
+                          <div className="grid grid-cols-4 gap-3">
+                            <div className="rounded-lg bg-red-500/10 p-3 text-center">
+                              <p className="text-2xl font-bold text-red-400">{activeCampaign.hotLeads}</p>
+                              <p className="text-xs text-red-400/70">Hot</p>
+                            </div>
+                            <div className="rounded-lg bg-orange-500/10 p-3 text-center">
+                              <p className="text-2xl font-bold text-orange-400">{activeCampaign.warmLeads}</p>
+                              <p className="text-xs text-orange-400/70">Warm</p>
+                            </div>
+                            <div className="rounded-lg bg-blue-500/10 p-3 text-center">
+                              <p className="text-2xl font-bold text-blue-400">{activeCampaign.coldLeads}</p>
+                              <p className="text-xs text-blue-400/70">Cold</p>
+                            </div>
+                            <div className="rounded-lg bg-zinc-500/10 p-3 text-center">
+                              <p className="text-2xl font-bold text-zinc-400">{activeCampaign.notInterested}</p>
+                              <p className="text-xs text-zinc-400/70">Not Interested</p>
+                            </div>
+                          </div>
+
+                          {/* Controls */}
+                          <div className="flex gap-3">
+                            {(activeCampaign.status === "draft" || activeCampaign.status === "paused") && (
+                              <Button onClick={() => updateCampaignStatus("running")} className="bg-emerald-600 hover:bg-emerald-700">
+                                <Play className="h-4 w-4 mr-2" /> {activeCampaign.status === "draft" ? "Start Campaign" : "Resume"}
+                              </Button>
+                            )}
+                            {activeCampaign.status === "running" && (
+                              <Button onClick={() => updateCampaignStatus("paused")} variant="outline" className="border-yellow-500/50 text-yellow-400 hover:bg-yellow-500/10">
+                                <Pause className="h-4 w-4 mr-2" /> Pause
+                              </Button>
+                            )}
+                            {["running", "paused"].includes(activeCampaign.status) && (
+                              <Button onClick={() => updateCampaignStatus("stopped")} variant="outline" className="border-red-500/50 text-red-400 hover:bg-red-500/10">
+                                <Square className="h-4 w-4 mr-2" /> Stop
+                              </Button>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
+
+                      {/* Lead Dashboard */}
+                      <Card className="bg-card/50 border-border">
+                        <CardHeader>
+                          <CardTitle className="text-base">Leads ({activeCampaignLeads.length})</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="overflow-x-auto rounded-lg border border-border">
+                            <table className="w-full text-sm">
+                              <thead><tr className="border-b border-border bg-muted/30">
+                                <th className="py-2 px-3 text-left font-medium text-muted-foreground">Business</th>
+                                <th className="py-2 px-3 text-left font-medium text-muted-foreground">Phone</th>
+                                <th className="py-2 px-3 text-left font-medium text-muted-foreground">Status</th>
+                                <th className="py-2 px-3 text-left font-medium text-muted-foreground">Classification</th>
+                                <th className="py-2 px-3 text-left font-medium text-muted-foreground">Summary</th>
+                                <th className="py-2 px-3 text-left font-medium text-muted-foreground">Duration</th>
+                              </tr></thead>
+                              <tbody>
+                                {activeCampaignLeads.length === 0 ? (
+                                  <EmptyRow cols={6} text="No leads yet" />
+                                ) : (
+                                  activeCampaignLeads.map((lead) => (
+                                    <tr key={lead.leadId} className="border-b border-border/50 hover:bg-secondary/20 transition-colors">
+                                      <td className="py-3 px-3 font-medium">{lead.businessName}</td>
+                                      <td className="py-3 px-3 font-mono text-xs">{lead.phoneNumber}</td>
+                                      <td className="py-3 px-3">{statusBadge(lead.status)}</td>
+                                      <td className="py-3 px-3">{classificationBadge(lead.classification)}</td>
+                                      <td className="py-3 px-3 text-xs text-muted-foreground max-w-[300px] truncate">{lead.callSummary || "—"}</td>
+                                      <td className="py-3 px-3 text-xs text-muted-foreground">{lead.callDurationSeconds ? `${lead.callDurationSeconds}s` : "—"}</td>
+                                    </tr>
+                                  ))
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </>
+                  )}
                 </>
               )}
             </motion.div>

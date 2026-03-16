@@ -220,6 +220,25 @@ export class VoxaStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY
     });
 
+    // Salesbot — campaigns table
+    const salesCampaignsTable = new ddb.Table(this, "SalesCampaignsTable", {
+      partitionKey: { name: "campaignId", type: ddb.AttributeType.STRING },
+      billingMode: ddb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY
+    });
+
+    // Salesbot — leads table
+    const salesLeadsTable = new ddb.Table(this, "SalesLeadsTable", {
+      partitionKey: { name: "campaignId", type: ddb.AttributeType.STRING },
+      sortKey: { name: "leadId", type: ddb.AttributeType.STRING },
+      billingMode: ddb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY
+    });
+    salesLeadsTable.addGlobalSecondaryIndex({
+      indexName: "CallUniqueIdIndex",
+      partitionKey: { name: "callUniqueId", type: ddb.AttributeType.STRING }
+    });
+
     const kbContentBucket = new s3.Bucket(this, "VoxaKbContentBucket", {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true
@@ -363,7 +382,9 @@ export class VoxaStack extends cdk.Stack {
         TOKENS_TABLE: tokensTable.tableName,
         CONVERSATIONS_TABLE: conversationsTable.tableName,
         RECORDINGS_BUCKET: recordingsBucket.bucketName,
-        CREDITS_TABLE: creditsTable.tableName
+        CREDITS_TABLE: creditsTable.tableName,
+        SALESBOT_WEBHOOK_URL: "",  // Set at deploy time or via env; e.g. https://<api-gw>/bms/salesbot/webhook
+        SALESBOT_WEBHOOK_SECRET: "voxa-salesbot-internal-2024"
       },
       portMappings: [{ containerPort: 80 }]
     });
@@ -446,6 +467,8 @@ export class VoxaStack extends cdk.Stack {
       WEBSITE_CONFIG_TABLE: websiteConfigTable.tableName,
       WEBSITE_ASSETS_BUCKET: websiteAssetsBucket.bucketName,
       RECORDINGS_BUCKET: recordingsBucket.bucketName,
+      SALES_CAMPAIGNS_TABLE: salesCampaignsTable.tableName,
+      SALES_LEADS_TABLE: salesLeadsTable.tableName,
       SONIC_SERVICE_URL: sonicServiceUrl as unknown as string,
       SONIC_MODEL_ID: "amazon.nova-2-sonic-v1:0",
       TEXT_MODEL_ID: "amazon.nova-lite-v1:0",
@@ -1310,6 +1333,93 @@ export class VoxaStack extends cdk.Stack {
       methods: [apigwv2.HttpMethod.GET],
       integration: new integrations.HttpLambdaIntegration("BmsCreditsIntegration", bmsFn),
       authorizer: jwtAuthorizer
+    });
+
+    // Salesbot Lambdas
+    const salesbotLeadsFn = new lambda.Function(this, "SalesbotLeadsFunction", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: "lambda/salesbot-leads.handler",
+      code: lambdaCode,
+      environment: { ...commonEnv, GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY || "" },
+      layers: layer,
+      timeout: cdk.Duration.seconds(30)
+    });
+    salesLeadsTable.grantReadWriteData(salesbotLeadsFn);
+    salesCampaignsTable.grantReadWriteData(salesbotLeadsFn);
+
+    const salesbotCampaignsFn = new lambda.Function(this, "SalesbotCampaignsFunction", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: "lambda/salesbot-campaigns.handler",
+      code: lambdaCode,
+      environment: commonEnv,
+      layers: layer
+    });
+    salesCampaignsTable.grantReadWriteData(salesbotCampaignsFn);
+    salesLeadsTable.grantReadData(salesbotCampaignsFn);
+
+    const salesbotCallFn = new lambda.Function(this, "SalesbotCallFunction", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: "lambda/salesbot-call.handler",
+      code: lambdaCode,
+      environment: { ...commonEnv, SIP_TRUNK_URL: process.env.SIP_TRUNK_URL || "http://localhost:3000" },
+      layers: layer,
+      timeout: cdk.Duration.seconds(30)
+    });
+    salesCampaignsTable.grantReadWriteData(salesbotCallFn);
+    salesLeadsTable.grantReadWriteData(salesbotCallFn);
+
+    const salesbotWebhookFn = new lambda.Function(this, "SalesbotWebhookFunction", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: "lambda/salesbot-webhook.handler",
+      code: lambdaCode,
+      environment: commonEnv,
+      layers: layer
+    });
+    salesCampaignsTable.grantReadWriteData(salesbotWebhookFn);
+    salesLeadsTable.grantReadWriteData(salesbotWebhookFn);
+
+    // Salesbot API routes
+    httpApi.addRoutes({
+      path: "/bms/salesbot/leads",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration("SalesbotLeadsIntegration", salesbotLeadsFn),
+      authorizer: jwtAuthorizer
+    });
+    httpApi.addRoutes({
+      path: "/bms/salesbot/leads/save",
+      methods: [apigwv2.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration("SalesbotLeadsSaveIntegration", salesbotLeadsFn),
+      authorizer: jwtAuthorizer
+    });
+    httpApi.addRoutes({
+      path: "/bms/salesbot/campaigns",
+      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration("SalesbotCampaignsIntegration", salesbotCampaignsFn),
+      authorizer: jwtAuthorizer
+    });
+    httpApi.addRoutes({
+      path: "/bms/salesbot/campaigns/{campaignId}",
+      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PATCH],
+      integration: new integrations.HttpLambdaIntegration("SalesbotCampaignDetailIntegration", salesbotCampaignsFn),
+      authorizer: jwtAuthorizer
+    });
+    httpApi.addRoutes({
+      path: "/bms/salesbot/test-call",
+      methods: [apigwv2.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration("SalesbotTestCallIntegration", salesbotCallFn),
+      authorizer: jwtAuthorizer
+    });
+    httpApi.addRoutes({
+      path: "/bms/salesbot/call-next",
+      methods: [apigwv2.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration("SalesbotCallNextIntegration", salesbotCallFn),
+      authorizer: jwtAuthorizer
+    });
+    httpApi.addRoutes({
+      path: "/bms/salesbot/webhook",
+      methods: [apigwv2.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration("SalesbotWebhookIntegration", salesbotWebhookFn)
+      // No authorizer — internal webhook from Sonic service, authenticated via X-Salesbot-Secret header
     });
 
     // Website config endpoints
